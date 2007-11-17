@@ -1,0 +1,53 @@
+#!/usr/bin/perl
+#------------------------------------------------------------------------
+use IO::Socket; 
+use Digest::SHA1;
+use File::Basename ;
+use English;
+use Getopt::Long;
+$|=1;
+#------------------------------------------------------------------------
+my %options ;
+my $debug=0 ;
+GetOptions (\%options,"verbose","listen","device=s","server=s");
+if ( $options{'verbose'} ) {
+    $debug=1 ;
+}
+#---------------------------------------------------- 
+if ( $options{'listen'} ) {
+    my $sock = new IO::Socket::INET ( LocalHost => '10.3.0.1', 
+				      LocalPort => '7070',
+				      Proto => 'tcp',
+				      Listen => 1, 
+				      Reuse => 1 );
+    #--------------------------------------
+    if ( ! $sock ) {
+	die "Could not create socket: $!\n" ;
+    }
+    #--------------------------------------------------------------------
+    my $state=0 ;
+    my $device_local="" ;
+    my $new_sock = $sock->accept(); 
+    while(<$new_sock>) {
+	print $_;
+    } 
+    close($sock);
+    #--------------------------------------------------------------------
+
+    #--------------------------------------------------------------------
+} else {
+    #--------------------------------------------------------------------
+    use IO::Socket;
+    my $sock = new IO::Socket::INET ( PeerAddr => $options{'server'} , 
+				      PeerPort => 7070 , 
+				      Proto => 'tcp' ); 
+    if ( ! $sock ) {
+	die "Could not connect to ".$options{'server'}." ( create socket: $!\n" ;
+    }
+    print $sock "Hello there!\n"; 
+    close($sock);
+    #--------------------------------------------------------------------
+    #--------------------------------------------------------------------
+}
+#------------------------------------------------------------------------
+
