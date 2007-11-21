@@ -1,5 +1,22 @@
 #!/usr/bin/perl -W
 #------------------------------------------------------------------------
+# (c) erwan@mas.nom.fr 2007
+#
+#  SyncDevice ( v 0.5 ) 
+#
+#  Synchronize device(s) via network , with minimun bandwith .
+#  The programm calculate checksum of piece of device , and 
+#  if the checksum is the same there are not bandwith used .
+#
+# Copyright:
+#  The program is distributed under the GNU General Public License version 2 
+#
+# Usage:
+#  SyncDevice --listen --verbose
+#  &
+#  SyncDevice --server <hostname> --device <localdevice>
+#
+#------------------------------------------------------------------------
 use strict ;
 use threads;
 use threads::shared;
@@ -24,7 +41,7 @@ my %options ;
 GetOptions (\%options,"verbose","listen","device=s","server=s","offset=i","blocksize=i" );
 #
 if ( $options{'verbose'} ) {
-    $debug=4 ;
+    $debug=5 ;
 }
 #------------------------------------------------------------------------
 if ( ! $options{'listen'} ) {
@@ -121,6 +138,7 @@ if ( $options{'listen'} ) {
 		     ( $block_checksum{$cur_pos}->{'sha1'} eq $cur_sha1 ) ) {
 		    $count_ok++ ;
 		    SendCmd($new_sock,"BLOCK $cur_pos OK") ;
+		    PurgeBlockCheckSum($sync_pos);
 		    lock($sync_pos) ;
 		    $sync_pos+=$options{'blocksize'} ;
 		} else {
@@ -135,6 +153,7 @@ if ( $options{'listen'} ) {
 		my $nr=read($new_sock,$buf,$options{'blocksize'} ) ;
 		if ( $nr == $options{'blocksize'} ) {
 		    WriteBlockData($device_local,$dat_pos+$device_local_offset,$buf) ;
+		    PurgeBlockCheckSum($sync_pos);
 		    lock($sync_pos) ;
 		    $sync_pos=$dat_pos+$options{'blocksize'} ;
 		}
@@ -255,6 +274,25 @@ sub SendBlockData {
     #----------------------
 }
 #----------------------------------------------------------------------------------------------
+sub DisplayProgress {
+    #--------------------------------------------------------------------
+    #--------------------------------------------------------------------    
+}
+#----------------------------------------------------------------------------------------------
+sub PurgeBlockCheckSum {
+    my $p=$_[0] ;
+    #
+    while ( $block_checksum{$p} ) {
+	lock(%block_checksum) ;
+	delete $block_checksum{$p}->{'md5'} ;
+	delete $block_checksum{$p}->{'sha1'} ;
+	delete $block_checksum{$p}->{'pos'} ;
+	delete $block_checksum{$p} ;
+	$p-=$options{'blocksize'} ;
+    }
+    #
+}
+#----------------------------------------------------------------------------------------------
 sub ComputeChecksum {
     #--------------------------------------------------------------------
     my ($device_to_read,$device_offset,$sync_size)=($_[0],$_[1],$_[2]) ;
@@ -267,9 +305,11 @@ sub ComputeChecksum {
     $cksum_pos=0 ;
     binmode DEVCKSUM ;
     #--------------------------------------------------------------------
+    my $factor=(268435456/$options{'blocksize'}) ;
+    #--------------------------------------------------------------------
     while ( $cksum_pos  < $sync_size ) {
-	if ( $cksum_pos > $sync_pos + 256*$options{'blocksize'} ) {
-	    Debug('Waiting %s vs %s ',$cksum_pos,$sync_pos) ;
+	if ( $cksum_pos > $sync_pos + $factor*$options{'blocksize'} ) {
+	    Debug('[debug] Waiting %s vs %s (%s) ',$cksum_pos,$sync_pos,scalar(keys %block_checksum)) ;
 	    sleep(10) ;
 	} else {
 	    my $buf ;
@@ -425,5 +465,14 @@ dd if=/dev/random of=/dev/xen_hdd/TestSyncDevice bs=512
 
 #------------------------------------------------------------------------
 
+pb conso memoirre avec des petit blocks
+pb thread de cksum qu'il faut arreter quand le client abort
+prevoir une progress bar
+
+
+
+prevoir une purge
+
 
 OK SendCmd BLOCK 14898167808 OK
+#------------------------------------------------------------------------
