@@ -18,6 +18,7 @@
 #
 #------------------------------------------------------------------------
 use strict ;
+use Fcntl ;
 use threads;
 use threads::shared;
 use IO::Socket; 
@@ -96,6 +97,7 @@ if ( $options{'listen'} ) {
     while ( $state == 0 ) {
 	my $new_sock = $sock->accept(); 
 	binmode $new_sock ;
+	select($new_sock) ; $|=1 ; select(STDOUT) ;
 	while(<$new_sock>) {
 	    my $l=$_ ;
 	    chomp($l) ;
@@ -130,17 +132,19 @@ if ( $options{'listen'} ) {
 		my $cur_md5=$2 ;
 		my $cur_sha1=$3 ;
 		#---------------------------
+		Debug("[debug] reception of CKSUM %s %s:%s (currently cksumpos %s) \n",$cur_pos,$cur_md5,$cur_sha1,$cksum_pos) ;
 		while ( ! $block_checksum{$cur_pos} ) {
 		    sleep 1 ;
 		}
+		Debug("[debug] ok Got IT ! cksumpos %s\n",$cksum_pos) ;
 		#---------------------------
 		if ( ( $block_checksum{$cur_pos}->{'md5'} eq $cur_md5 ) &&
 		     ( $block_checksum{$cur_pos}->{'sha1'} eq $cur_sha1 ) ) {
 		    $count_ok++ ;
 		    SendCmd($new_sock,"BLOCK $cur_pos OK") ;
-		    PurgeBlockCheckSum($sync_pos);
 		    lock($sync_pos) ;
 		    $sync_pos+=$options{'blocksize'} ;
+		    PurgeBlockCheckSum($sync_pos);
 		} else {
 		    SendCmd($new_sock,"NEED DATA $cur_pos") ;		    
 		    $count_ko++ ;
@@ -153,10 +157,11 @@ if ( $options{'listen'} ) {
 		my $nr=read($new_sock,$buf,$options{'blocksize'} ) ;
 		if ( $nr == $options{'blocksize'} ) {
 		    WriteBlockData($device_local,$dat_pos+$device_local_offset,$buf) ;
-		    PurgeBlockCheckSum($sync_pos);
 		    lock($sync_pos) ;
 		    $sync_pos=$dat_pos+$options{'blocksize'} ;
+		    PurgeBlockCheckSum($sync_pos);
 		}
+		$buf=undef ;
 		#-------------------------------------------------------
 	    } else {
 		#-------------------------------------------------------
@@ -171,6 +176,8 @@ if ( $options{'listen'} ) {
 		      $sync_pos,$sync_length,$count_ok,$count_ko,($sync_endtime-$sync_starttime) ) ;
 	    }
 	    #------------------------------------------------------------
+	    $l=undef ;
+	    #------------------------------------------------------------
 	}
 	#----------------------------------------------------------------
 	if ( ! $sync_endtime ) {
@@ -183,8 +190,6 @@ if ( $options{'listen'} ) {
     }
     close($sock);
     #--------------------------------------------------------------------
-
-    #--------------------------------------------------------------------
 } else {
     #--------------------------------------------------------------------
     use IO::Socket;
@@ -195,6 +200,7 @@ if ( $options{'listen'} ) {
 	die "Could not connect to ".$options{'server'}." ( create socket: $! ) \n" ;
     }
     binmode $sock ;
+    select($sock) ; $|=1 ; select(STDOUT) ;
     #--------------------------------------------------------------------
     if ( SendCmdAndWait($sock,sprintf("DEVICE %s %s %s",$options{'device'},$sync_length,$options{'blocksize'})) =~/^\s*OK DEVICE\s*$/ ) {
 	Debug("OK SendCmdAndWait DEVICE\n") ;
@@ -214,6 +220,7 @@ if ( $options{'listen'} ) {
 		    lock($sync_pos) ;
 		    $sync_pos+=$options{'blocksize'} ;
 		}
+		PurgeBlockCheckSum($sync_pos);
 	    } else {
 		sleep(5) ;
 	    }
@@ -222,9 +229,10 @@ if ( $options{'listen'} ) {
     } else {
 	Debug("PB sending DEVICE\n") ;
     }
+    #
+    sleep(3600*10) ;
     #--------------------------------------------------------------------
     close($sock);
-    #--------------------------------------------------------------------
     #--------------------------------------------------------------------
 }
 #----------------------------------------------------------------------------------------------
@@ -233,7 +241,7 @@ sub WriteBlockData {
     my $p=$_[1] ;
     my $b=$_[2] ;
     #----------------------
-    if ( ! open(DEVTOWRITE,"+<$d") ) {
+    if ( ! sysopen(DEVTOWRITE,$d, O_LARGEFILE | O_RDWR) ) {
         Debug("PB open device '%s'\n",$d) ;
         exit 1 ;
     }
@@ -244,7 +252,7 @@ sub WriteBlockData {
     close(DEVTOWRITE) ;
     #----------------------
     if ( $nwrite != $options{'blocksize'} ) {
-	uses bytes ;
+	use bytes ;
 	Debug("PB write device '%s' at '%s' length b %s / nwrite %s \n",$d,$p,length($b),$nwrite) ;
 	exit 1;
     }
@@ -269,6 +277,7 @@ sub SendBlockData {
 	print $s "BLOCK DATA $p\n" ;
 	print $s $buf ;
     }
+    $buf=undef ;
     #----------------------
     close(DEVTOREAD) ;
     #----------------------
@@ -282,13 +291,14 @@ sub DisplayProgress {
 sub PurgeBlockCheckSum {
     my $p=$_[0] ;
     #
-    while ( $block_checksum{$p} ) {
+    $p-=$options{'blocksize'} ;
+    #
+    while ( defined($block_checksum{$p}) ) {
 	lock(%block_checksum) ;
 	delete $block_checksum{$p}->{'md5'} ;
 	delete $block_checksum{$p}->{'sha1'} ;
 	delete $block_checksum{$p}->{'pos'} ;
 	delete $block_checksum{$p} ;
-	$p-=$options{'blocksize'} ;
     }
     #
 }
@@ -298,7 +308,7 @@ sub ComputeChecksum {
     my ($device_to_read,$device_offset,$sync_size)=($_[0],$_[1],$_[2]) ;
     Debug('starting cksum thread on %s starting at %s during %s bytes',$device_to_read,$device_offset,$sync_size) ;
     #--------------------------------------------------------------------
-    if ( ! open(DEVCKSUM,"<$device_to_read") ) {
+    if ( ! sysopen(DEVCKSUM,$device_to_read, O_LARGEFILE | O_RDONLY )  ) {
 	Debug("PB open device '%s'\n",$device_to_read) ;
 	exit 1 ;
     }
@@ -313,17 +323,26 @@ sub ComputeChecksum {
 	    sleep(10) ;
 	} else {
 	    my $buf ;
-	    sysseek(DEVCKSUM,$device_offset+$cksum_pos,0) ;
+	    if ( ! sysseek(DEVCKSUM,$device_offset+$cksum_pos,0) ) {
+		Debug("pb during seek at %s error %s\n",$device_offset+$cksum_pos,$!) ;
+		exit 1 ;
+	    }
 	    my $nread=sysread(DEVCKSUM,$buf,$options{'blocksize'}) ;
-	    if ( $nread == $options{'blocksize'} ) {
-		my %h : shared  ;
-		$h{'pos'}=$cksum_pos ;
-		$h{'md5'}=md5_hex($buf) ;
-		$h{'sha1'}=sha1_hex($buf) ;
-		lock(%block_checksum) ;
-		$block_checksum{$cksum_pos}=\%h ;
-		$cksum_pos=$cksum_pos+$options{'blocksize'} ;
-	    } 
+	    if ( defined($nread) ) {
+		if ( $nread == $options{'blocksize'} ) {
+		    my %h : shared  ;
+		    $h{'pos'}=$cksum_pos ;
+		    $h{'md5'}=md5_hex($buf) ;
+		    $h{'sha1'}=sha1_hex($buf) ;
+		    lock(%block_checksum) ;
+		    $block_checksum{$cksum_pos}=\%h ;
+		    $cksum_pos=$cksum_pos+$options{'blocksize'} ;
+		} 
+	    } else {
+		Debug("pb during read it %s error %s\n",$device_offset+$cksum_pos,$!) ;
+		exit 1 ;
+	    }
+	    $buf=undef ;
 	}
     }
     close(DEVCKSUM) ;
