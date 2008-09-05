@@ -24,6 +24,7 @@ use threads::shared;
 use IO::Socket; 
 use Digest::SHA1  qw(sha1_hex) ;
 use Digest::MD5   qw(md5_hex) ;
+use Time::HiRes qw(usleep) ;
 use File::Basename ;
 use English;
 use Getopt::Long;
@@ -39,10 +40,10 @@ my %debug_level_2_print=( 'debug'   => 5,
 my $debug=0 ;
 #
 my %options ;
-GetOptions (\%options,"verbose","listen","device=s","server=s","offset=i","blocksize=i" );
+GetOptions (\%options,"verbose","listen=s","device=s","server=s","offset=i","blocksize=i" );
 #
 if ( $options{'verbose'} ) {
-    $debug=5 ;
+    $debug=4 ;
 }
 #------------------------------------------------------------------------
 if ( ! $options{'listen'} ) {
@@ -65,6 +66,7 @@ my $cksum_pos         : shared ;
 my $count_ok ;
 my $count_ko ;
 my $sync_starttime ;
+my $sync_curtime ;
 my $sync_endtime ;
 #
 my $thr_cksum ;
@@ -78,7 +80,7 @@ if ( ! $options{'listen'} ) {
 }
 #------------------------------------------------------------------------
 if ( $options{'listen'} ) {
-    my $sock = new IO::Socket::INET ( LocalHost => '10.3.0.1', 
+    my $sock = new IO::Socket::INET ( LocalHost => $options{'listen'} , 
 				      LocalPort => '7070',
 				      Proto => 'tcp',
 				      Listen => 1, 
@@ -87,7 +89,7 @@ if ( $options{'listen'} ) {
     if ( ! $sock ) {
 	die "Could not create socket: $!\n" ;
     }
-    &Debug("Listen on 10.3.0.1:7070") ;
+    &Debug("Listen on %s:7070",$options{'listen'}) ;
     #--------------------------------------------------------------------
     my $state=0 ;
     my $device_local="" ;
@@ -118,6 +120,7 @@ if ( $options{'listen'} ) {
 			$count_ok=0;
 			$count_ko=0;
 			$sync_starttime=time();
+			$sync_curtime=time()+90 ;
 			#-------------------------------------------------
 			$thr_cksum=threads->new(\&ComputeChecksum,$device_local,$device_local_offset,$sync_length) ;
 			#-------------------------------------------------
@@ -133,7 +136,11 @@ if ( $options{'listen'} ) {
 		my $cur_sha1=$3 ;
 		#---------------------------
 		Debug("[debug] reception of CKSUM %s %s:%s (currently cksumpos %s) \n",$cur_pos,$cur_md5,$cur_sha1,$cksum_pos) ;
+		if ( ! $block_checksum{$cur_pos} ) {
+		    sleep 1 ;
+		}
 		while ( ! $block_checksum{$cur_pos} ) {
+		    Debug('[notice] ComputeChecksum too slow / Waiting %s vs %s (%s) ',$cur_pos,$cksum_pos,scalar(keys %block_checksum)) ;
 		    sleep 1 ;
 		}
 		Debug("[debug] ok Got IT ! cksumpos %s\n",$cksum_pos) ;
@@ -152,14 +159,17 @@ if ( $options{'listen'} ) {
 		#-------------------------------------------------------
 	    } elsif ($l=~ /^\s*BLOCK DATA\s+(\d+)\s*/ ) {
 		#---------------------------
+		Debug("[debug] %s .... currently receive ....",$l) ;
 		my $dat_pos=$1 ;
 		my $buf ;
 		my $nr=read($new_sock,$buf,$options{'blocksize'} ) ;
 		if ( $nr == $options{'blocksize'} ) {
+		    Debug("[debug] .... currently receive .... DONE ") ;
 		    WriteBlockData($device_local,$dat_pos+$device_local_offset,$buf) ;
 		    lock($sync_pos) ;
 		    $sync_pos=$dat_pos+$options{'blocksize'} ;
 		    PurgeBlockCheckSum($sync_pos);
+		    Debug("[debug] .... sync local .... DONE ") ;
 		}
 		$buf=undef ;
 		#-------------------------------------------------------
@@ -174,6 +184,12 @@ if ( $options{'listen'} ) {
 		$sync_endtime=time() ;
 		Debug("OK sync done : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s \n",
 		      $sync_pos,$sync_length,$count_ok,$count_ko,($sync_endtime-$sync_starttime) ) ;
+	    }
+	    #------------------------------------------------------------
+	    if ( $sync_curtime < time()  ) {
+		$sync_curtime=time()+90 ;
+		Debug("Stats Sync : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s \n",
+		      $sync_pos,$sync_length,$count_ok,$count_ko,(time()-$sync_starttime) ) ;
 	    }
 	    #------------------------------------------------------------
 	    $l=undef ;
@@ -222,7 +238,10 @@ if ( $options{'listen'} ) {
 		}
 		PurgeBlockCheckSum($sync_pos);
 	    } else {
-		sleep(5) ;
+		if ( defined ( $cksum_pos ) ) {
+		    Debug('[notice] ComputeChecksum too slow / Waiting %s vs %s (%s) ',$cksum_pos,$sync_pos,scalar(keys %block_checksum)) ;
+		}
+		sleep(1) ;
 	    }
 	}
 	#
@@ -274,6 +293,7 @@ sub SendBlockData {
     sysseek(DEVTOREAD,$p,0) ;
     my $nread=sysread(DEVTOREAD,$buf,$options{'blocksize'}) ;
     if ( $nread == $options{'blocksize'} ) {
+	Debug("[debug] .... starting transmiting .... ") ;
 	print $s "BLOCK DATA $p\n" ;
 	print $s $buf ;
     }
@@ -281,6 +301,7 @@ sub SendBlockData {
     #----------------------
     close(DEVTOREAD) ;
     #----------------------
+    Debug("[debug] .... transmiting .... DONE ") ;
 }
 #----------------------------------------------------------------------------------------------
 sub DisplayProgress {
@@ -319,8 +340,8 @@ sub ComputeChecksum {
     #--------------------------------------------------------------------
     while ( $cksum_pos  < $sync_size ) {
 	if ( $cksum_pos > $sync_pos + $factor*$options{'blocksize'} ) {
-	    Debug('[debug] Waiting %s vs %s (%s) ',$cksum_pos,$sync_pos,scalar(keys %block_checksum)) ;
-	    sleep(10) ;
+	    Debug('[notice] ComputeChecksum too fast / Waiting %s vs %s (%s) ',$cksum_pos,$sync_pos,scalar(keys %block_checksum)) ;
+	    sleep(5) ;
 	} else {
 	    my $buf ;
 	    if ( ! sysseek(DEVCKSUM,$device_offset+$cksum_pos,0) ) {
@@ -381,7 +402,7 @@ sub SendCmdAndWait {
 	    $l=<$s> ;
 	    if ( defined $l ) {
 		chomp($l) ;
-		Debug("SendCmdAndWait receive '%s'\n",$l) ;
+		Debug("[debug] SendCmdAndWait receive '%s'\n",$l) ;
 		return $l ;
 	    } else {
 		return undef ;
