@@ -40,7 +40,7 @@ my %debug_level_2_print=( 'debug'   => 5,
 my $debug=0 ;
 #
 my %options ;
-GetOptions (\%options,"verbose","listen=s","device=s","server=s","offset=i","blocksize=i" );
+GetOptions (\%options,"verbose","listen=s","device=s","server=s","offset=i","blocksize=i","toleratefile");
 #
 if ( $options{'verbose'} ) {
     $debug=4 ;
@@ -72,10 +72,13 @@ my $sync_endtime ;
 my $thr_cksum ;
 #
 if ( ! $options{'listen'} ) {
-    if ( ! -b $options{'device'} ) {
+    if ( ! -b $options{'device'} && ! $options{'toleratefile'} ) {
 	die(sprintf("device %s is not a device \n",$options{'device'})) ;
     } else {
-	($sync_length,$sync_length_block)=DeviceSize($options{'device'}) ;
+	($sync_length,$sync_length_block)=DeviceSize($options{'device'},1) ;
+    }
+    if ( ( $sync_length % $options{'blocksize'} ) ne 0 ) {
+	die(sprintf("device %s has a length that is not modulus of %d \n",$options{'device'},$options{'blocksize'})) ;	
     }
 }
 #------------------------------------------------------------------------
@@ -111,7 +114,7 @@ if ( $options{'listen'} ) {
 		printf "request for sync device %s\n",$device_distant ;
 		$device_local=&ReadDevice("please enter your local device:\n") ;
 		$device_local_offset=&ReadOffset("please enter the current offset (0,32256,...) for synchronize:\n") ;
-		if ( $device_local && $device_local_offset ) {
+		if ( $device_local && defined($device_local_offset) ) {
 		    my ($sd,$sdb)=&DeviceSize($device_local) ;
 		    if ( ( $sync_length + $device_local_offset ) < $sd ) {
 			#-------------------------------------------------
@@ -125,8 +128,12 @@ if ( $options{'listen'} ) {
 			$thr_cksum=threads->new(\&ComputeChecksum,$device_local,$device_local_offset,$sync_length) ;
 			#-------------------------------------------------
 		    } else {
+			&Debug("[debug] pb with request ( %d + %d >= %d )\n", $sync_length , $device_local_offset , $sd ) ;
 			SendCmd($new_sock,'KO DEVICE') ;
 		    }
+		} else {
+		    &Debug("[debug] pb with '%s' & '%s' \n",$device_local,$device_local_offset) ;
+		    SendCmd($new_sock,'KO DEVICE') ;
 		}
 		#-------------------------------------------------------
 	    } elsif ($l=~ /^\s*CKSUM\s+(\d+)\s+:([^:]+):([^:+]+)\s*/ ) {
@@ -358,7 +365,10 @@ sub ComputeChecksum {
 		    lock(%block_checksum) ;
 		    $block_checksum{$cksum_pos}=\%h ;
 		    $cksum_pos=$cksum_pos+$options{'blocksize'} ;
-		} 
+		} else {
+		    Debug("pb during read it got only %s instead %s\n",$nread,$options{'blocksize'}) ;
+		    exit 1 ;
+		}
 	    } else {
 		Debug("pb during read it %s error %s\n",$device_offset+$cksum_pos,$!) ;
 		exit 1 ;
@@ -371,11 +381,23 @@ sub ComputeChecksum {
 }
 #----------------------------------------------------------------------------------------------
 sub DeviceSize {
-    my $sb =`blockdev  --getsize64 $_[0]` ;
-    chomp($sb) ;
-    my $sbk=$sb/512 ;
-    Debug("for device %s size is  %s bytes or %s blocks(512bytes)\n",$_[0],$sb,$sbk ) ;
-    return ( $sb,$sbk) ;
+    if ( -b $_[0] ) {
+	my $sb =`blockdev  --getsize64 $_[0]` ;
+	chomp($sb) ;
+	my $sbk=$sb/512 ;
+	Debug("for device %s size is  %s bytes or %s blocks(512bytes)\n",$_[0],$sb,$sbk ) ;
+	return ( $sb,$sbk) ;
+    } elsif ( -f $_[0] && $_[1]) {
+	my @infof=(stat($_[0]))[7] ;
+	if ( ( ( $infof[0] % 512 ) != 0 ) ) {
+	    die(sprintf("for file %s , size in byte ( %d ) is a multiple of 512 \n",$_[0],$infof[0])) ;
+	}
+	push @infof,$infof[0]/512 ;
+	Debug("for file %s size is  %s bytes or %s blocks(512bytes)\n",$_[0],$infof[0],$infof[1]) ;
+	return @infof ;
+    } else {
+	return (0,0) ;
+    }
 }
 #----------------------------------------------------------------------------------------------
 sub SendCmd {
