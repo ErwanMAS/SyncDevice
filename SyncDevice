@@ -2,7 +2,8 @@
 #------------------------------------------------------------------------
 # (c) erwan@mas.nom.fr 2007
 #
-#  SyncDevice ( v 0.5 ) 
+#  SyncDevice 
+#  $Id: SyncDevice,v 1.7 2010/08/07 07:39:54 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
