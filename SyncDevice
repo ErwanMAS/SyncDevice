@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.9 2010/08/07 08:39:22 mas Exp $
+#  $Id: SyncDevice,v 1.10 2010/08/07 16:15:01 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -17,6 +17,12 @@
 #  &
 #  SyncDevice --server <hostname> --device <localdevice>
 #
+# Done:
+#  add Zlib compression
+# Todo:
+#  Switch to C
+#  add SHA-512 
+#  
 #------------------------------------------------------------------------
 use strict ;
 use Fcntl ;
@@ -30,6 +36,7 @@ use File::Basename ;
 use English;
 use Getopt::Long;
 use Data::Dumper ;
+use Compress::Zlib ;
 $|=1;
 #------------------------------------------------------------------------
 my %debug_level_2_print=( 'debug'   => 5,
@@ -41,10 +48,14 @@ my %debug_level_2_print=( 'debug'   => 5,
 my $debug=0 ;
 #
 my %options ;
-GetOptions (\%options,"verbose","listen=s","device=s","destination-server=s","offset=i","blocksize=i","toleratefile");
+GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","offset=i","blocksize=i","toleratefile","compress=s");
 #
-if ( $options{'verbose'} ) {
-    $debug=4 ;
+if ( defined($options{'verbose'} ) ) {
+    if ( $debug_level_2_print{$options{'verbose'}} ) {
+	$debug=$debug_level_2_print{$options{'verbose'}} ;
+    } else {
+	$debug=4 ;
+    }
 }
 #------------------------------------------------------------------------
 if ( ! $options{'listen'} ) {
@@ -57,6 +68,11 @@ if ( ! $options{'offset'} ) {
 }
 if ( ! $options{'blocksize'} ) {
     $options{'blocksize'}=1024*1024 ;
+}
+if ( ( ! $options{'compress'} ) || ( $options{'compress'} eq 'yes' ) ) {
+    $options{'compress'}=1 ;
+} else {
+    $options{'compress'}=0 ;
 }
 #------------------------------------------------------------------------
 my %block_checksum : shared ;
@@ -178,8 +194,33 @@ if ( $options{'listen'} ) {
 		    $sync_pos=$dat_pos+$options{'blocksize'} ;
 		    PurgeBlockCheckSum($sync_pos);
 		    Debug("[debug] .... sync local .... DONE ") ;
+		} else {
+		    Debug("[error] block ${dat_pos} length read data <> blocksize") ;
 		}
 		$buf=undef ;
+		#-------------------------------------------------------
+	    } elsif ($l=~ /^\s*BLOCK DATA\s+COMPRESS\s+(\d+)\s+(\d+)\s*/ ) {
+		#---------------------------
+		Debug("[debug] %s .... currently receive ....",$l) ;
+		my $dat_pos=$1 ;
+		my $dat_siz=$2 ;
+		my $buf_cmp ;
+		my $nr=read($new_sock,$buf_cmp,$dat_siz) ;
+		if ( $nr == $dat_siz ) {
+		    Debug("[debug] .... currently receive .... DONE ") ;
+		    my $buf=uncompress($buf_cmp) ;
+		    if ( length($buf) == $options{'blocksize'} ) {
+			WriteBlockData($device_local,$dat_pos+$device_local_offset,$buf) ;
+			lock($sync_pos) ;
+			$sync_pos=$dat_pos+$options{'blocksize'} ;
+			PurgeBlockCheckSum($sync_pos);
+			Debug("[debug] .... sync local .... DONE ") ;
+		    } else {
+			Debug("[error] block ${dat_pos} length uncompress block <> blocksize") ;
+		    }
+		    $buf=undef ;
+		}
+		$buf_cmp=undef ;
 		#-------------------------------------------------------
 	    } else {
 		#-------------------------------------------------------
@@ -198,7 +239,7 @@ if ( $options{'listen'} ) {
 		$sync_curtime=time()+90 ;
 		Debug("Stats Sync : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s remaining time %s\n",
 		      $sync_pos,$sync_length,$count_ok,$count_ko,(time()-$sync_starttime),
-		      int(((time()-$sync_starttime)/ ($sync_pos+1))*$sync_length) ) ;
+		      int(((time()-$sync_starttime)/ ($sync_pos+1))*$sync_length)-(time()-$sync_starttime) ) ;
 	    }
 	    #------------------------------------------------------------
 	    $l=undef ;
@@ -302,9 +343,16 @@ sub SendBlockData {
     sysseek(DEVTOREAD,$p,0) ;
     my $nread=sysread(DEVTOREAD,$buf,$options{'blocksize'}) ;
     if ( $nread == $options{'blocksize'} ) {
-	Debug("[debug] .... starting transmiting .... ") ;
-	print $s "BLOCK DATA $p\n" ;
-	print $s $buf ;
+	if ( ! $options{'compress'} ) {
+	    print $s "BLOCK DATA $p\n" ;
+	    Debug("[debug] .... starting transmiting block $p  ") ;
+	    print $s $buf ;
+	} else {
+	    my $buf_cmp=compress($buf) ;
+	    printf $s "BLOCK DATA COMPRESS ".$p." %d \n",length($buf_cmp) ;
+	    Debug(sprintf("[debug] .... starting transmiting block ".$p." compress %d",length($buf_cmp))) ;
+	    print  $s $buf_cmp ;
+	}
     }
     $buf=undef ;
     #----------------------
