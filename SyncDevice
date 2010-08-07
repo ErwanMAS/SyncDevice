@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.8 2010/08/07 07:53:59 mas Exp $
+#  $Id: SyncDevice,v 1.9 2010/08/07 08:39:22 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -196,8 +196,9 @@ if ( $options{'listen'} ) {
 	    #------------------------------------------------------------
 	    if ( $sync_curtime < time()  ) {
 		$sync_curtime=time()+90 ;
-		Debug("Stats Sync : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s \n",
-		      $sync_pos,$sync_length,$count_ok,$count_ko,(time()-$sync_starttime) ) ;
+		Debug("Stats Sync : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s remaining time %s\n",
+		      $sync_pos,$sync_length,$count_ok,$count_ko,(time()-$sync_starttime),
+		      int(((time()-$sync_starttime)/ ($sync_pos+1))*$sync_length) ) ;
 	    }
 	    #------------------------------------------------------------
 	    $l=undef ;
@@ -383,9 +384,16 @@ sub ComputeChecksum {
 #----------------------------------------------------------------------------------------------
 sub DeviceSize {
     if ( -b $_[0] ) {
-	my $sb =`blockdev  --getsize64 $_[0]` ;
-	chomp($sb) ;
-	my $sbk=$sb/512 ;
+	my $sb =`blockdev  --getsize64 $_[0] 2>&1 ` ;
+	my $sbk ;
+        if ( $sb !~ /^\d+$/ ) {
+	    $sb =`blockdev  --getsize $_[0] 2>&1 ` ;
+	    chomp($sb) ;
+	    $sbk=$sb ;
+	    $sb=$sbk*512 ;
+	} else {
+	    $sbk=$sb/512 ;
+	}
 	Debug("for device %s size is  %s bytes or %s blocks(512bytes)\n",$_[0],$sb,$sbk ) ;
 	return ( $sb,$sbk) ;
     } elsif ( -f $_[0] && $_[1]) {
