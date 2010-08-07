@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.7 2010/08/07 07:39:54 mas Exp $
+#  $Id: SyncDevice,v 1.8 2010/08/07 07:53:59 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -41,15 +41,15 @@ my %debug_level_2_print=( 'debug'   => 5,
 my $debug=0 ;
 #
 my %options ;
-GetOptions (\%options,"verbose","listen=s","device=s","server=s","offset=i","blocksize=i","toleratefile");
+GetOptions (\%options,"verbose","listen=s","device=s","destination-server=s","offset=i","blocksize=i","toleratefile");
 #
 if ( $options{'verbose'} ) {
     $debug=4 ;
 }
 #------------------------------------------------------------------------
 if ( ! $options{'listen'} ) {
-    if ( ! $options{'server'} ||  ! $options{'device'} ) {
-	die(" need a --device / --server options\n") ;
+    if ( ! $options{'destination-server'} ||  ! $options{'device'} ) {
+	die(" need a --device / --destination-server options\n") ;
     }
 }
 if ( ! $options{'offset'} ) {
@@ -217,11 +217,11 @@ if ( $options{'listen'} ) {
 } else {
     #--------------------------------------------------------------------
     use IO::Socket;
-    my $sock = new IO::Socket::INET ( PeerAddr => $options{'server'} , 
+    my $sock = new IO::Socket::INET ( PeerAddr => $options{'destination-server'} , 
 				      PeerPort => 7070 , 
 				      Proto => 'tcp' ); 
     if ( ! $sock ) {
-	die "Could not connect to ".$options{'server'}." ( create socket: $! ) \n" ;
+	die "Could not connect to ".$options{'destination-server'}." ( create socket: $! ) \n" ;
     }
     binmode $sock ;
     select($sock) ; $|=1 ; select(STDOUT) ;
@@ -514,7 +514,7 @@ sub Debug {
 __END__
 #------------------------------------------------------------------------
 scp lotar.emotic.info:/usr/local/bin/SyncDevice .
-/usr/local/bin/SyncDevice --device /dev/xen_hdd/mylar --server 10.3.0.1 --verbose
+/usr/local/bin/SyncDevice --device /dev/xen_hdd/mylar --destination-server 10.3.0.1 --verbose
 /dev/drbd2
 #------------------------------------------------------------------------
 /dev/lotar/Grub-Etherboot-ISO
@@ -522,7 +522,7 @@ lvcreate -n TestSyncDevice --size 15M xen_hdd
 lvcreate -n TestSyncDevice --size 17M lotar
 dd if=/dev/random of=/dev/xen_hdd/TestSyncDevice bs=512
 
-/usr/local/bin/SyncDevice --device /dev/xen_hdd/TestSyncDevice --server 10.3.0.1 --verbose
+/usr/local/bin/SyncDevice --device /dev/xen_hdd/TestSyncDevice --destination-server 10.3.0.1 --verbose
 /dev/lotar/TestSyncDevice
 32256
 
