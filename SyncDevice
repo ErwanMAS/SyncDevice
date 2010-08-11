@@ -1,13 +1,13 @@
 #!/usr/bin/perl -W
 #------------------------------------------------------------------------
-# (c) erwan@mas.nom.fr 2007
+# (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.10 2010/08/07 16:15:01 mas Exp $
+#  $Id: SyncDevice,v 1.11 2010/08/11 12:04:08 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
-#  if the checksum is the same there are not bandwith used .
+#  if the checksum is the same there are no bandwith used .
 #
 # Copyright:
 #  The program is distributed under the GNU General Public License version 2 
@@ -19,15 +19,18 @@
 #
 # Done:
 #  add Zlib compression
+#  block writer is asynchrone
 # Todo:
 #  Switch to C
 #  add SHA-512 
+#  stats - block transfert by network - compression factor 
 #  
 #------------------------------------------------------------------------
 use strict ;
 use Fcntl ;
 use threads;
 use threads::shared;
+use Thread::Queue ;
 use IO::Socket; 
 use Digest::SHA1  qw(sha1_hex) ;
 use Digest::MD5   qw(md5_hex) ;
@@ -75,7 +78,7 @@ if ( ( ! $options{'compress'} ) || ( $options{'compress'} eq 'yes' ) ) {
     $options{'compress'}=0 ;
 }
 #------------------------------------------------------------------------
-my %block_checksum : shared ;
+my %block_checksum    : shared ;
 my $sync_pos          : shared ;
 my $sync_length       : shared ;
 my $sync_length_block : shared ;
@@ -86,7 +89,10 @@ my $sync_starttime ;
 my $sync_curtime ;
 my $sync_endtime ;
 #
+my $queue_4_writing_block=Thread::Queue->new;
+#
 my $thr_cksum ;
+my $thr_write ;
 #
 if ( ! $options{'listen'} ) {
     if ( ! -b $options{'device'} && ! $options{'toleratefile'} ) {
@@ -143,6 +149,7 @@ if ( $options{'listen'} ) {
 			$sync_curtime=time()+90 ;
 			#-------------------------------------------------
 			$thr_cksum=threads->new(\&ComputeChecksum,$device_local,$device_local_offset,$sync_length) ;
+			$thr_write=threads->new(\&BlockWriter,$device_local,$device_local_offset,$sync_length) ;
 			#-------------------------------------------------
 		    } else {
 			&Debug("[debug] pb with request ( %d + %d >= %d )\n", $sync_length , $device_local_offset , $sd ) ;
@@ -189,7 +196,13 @@ if ( $options{'listen'} ) {
 		my $nr=read($new_sock,$buf,$options{'blocksize'} ) ;
 		if ( $nr == $options{'blocksize'} ) {
 		    Debug("[debug] .... currently receive .... DONE ") ;
-		    WriteBlockData($device_local,$dat_pos+$device_local_offset,$buf) ;
+		    while ( $queue_4_writing_block->pending() > 60 ) {
+			sleep(2) ;
+			Debug('[notice] BlockWriter too slow') ;
+		    }
+		    $queue_4_writing_block->enqueue('WRT') ;
+		    $queue_4_writing_block->enqueue($dat_pos+$device_local_offset) ;
+		    $queue_4_writing_block->enqueue($buf) ;
 		    lock($sync_pos) ;
 		    $sync_pos=$dat_pos+$options{'blocksize'} ;
 		    PurgeBlockCheckSum($sync_pos);
@@ -208,9 +221,15 @@ if ( $options{'listen'} ) {
 		my $nr=read($new_sock,$buf_cmp,$dat_siz) ;
 		if ( $nr == $dat_siz ) {
 		    Debug("[debug] .... currently receive .... DONE ") ;
+		    while ( $queue_4_writing_block->pending() > 60 ) {
+			sleep(2) ;
+			Debug('[notice] BlockWriter too slow') ;
+		    }
 		    my $buf=uncompress($buf_cmp) ;
 		    if ( length($buf) == $options{'blocksize'} ) {
-			WriteBlockData($device_local,$dat_pos+$device_local_offset,$buf) ;
+			$queue_4_writing_block->enqueue('WRT') ;
+			$queue_4_writing_block->enqueue($dat_pos+$device_local_offset) ;
+			$queue_4_writing_block->enqueue($buf) ;
 			lock($sync_pos) ;
 			$sync_pos=$dat_pos+$options{'blocksize'} ;
 			PurgeBlockCheckSum($sync_pos);
@@ -305,6 +324,25 @@ if ( $options{'listen'} ) {
     #--------------------------------------------------------------------
 }
 #----------------------------------------------------------------------------------------------
+sub BlockWriter {
+    my ($dev,$dev_off,$dat_len)=@_ ;
+    my $last_write=0 ;
+    while ( $last_write < $dev_off+$dat_len-$options{'blocksize'} ) {
+	my $what=$queue_4_writing_block->dequeue() ;
+	if ( $what eq 'WRT' ) {
+	    my $pos=$queue_4_writing_block->dequeue() ;
+	    my $dat=$queue_4_writing_block->dequeue() ;
+	    &WriteBlockData($dev,$pos,$dat) ;
+	    $last_write=$pos ;
+	    $pos=undef ;
+	    $dat=undef ;
+	} else {
+	    Debug("[error] BlockWriter bad args '%s'",$what) ;
+	}
+	$what=undef ;
+    }
+}
+#----------------------------------------------------------------------------------------------
 sub WriteBlockData {
     my $d=$_[0] ;
     my $p=$_[1] ;
@@ -348,6 +386,7 @@ sub SendBlockData {
 	    Debug("[debug] .... starting transmiting block $p  ") ;
 	    print $s $buf ;
 	} else {
+	    use bytes ;
 	    my $buf_cmp=compress($buf) ;
 	    printf $s "BLOCK DATA COMPRESS ".$p." %d \n",length($buf_cmp) ;
 	    Debug(sprintf("[debug] .... starting transmiting block ".$p." compress %d",length($buf_cmp))) ;
