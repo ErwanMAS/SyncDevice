@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.11 2010/08/11 12:04:08 mas Exp $
+#  $Id: SyncDevice,v 1.12 2010/08/14 08:48:13 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -20,6 +20,7 @@
 # Done:
 #  add Zlib compression
 #  block writer is asynchrone
+#  add a option for the port 
 # Todo:
 #  Switch to C
 #  add SHA-512 
@@ -103,11 +104,24 @@ if ( ! $options{'listen'} ) {
     if ( ( $sync_length % $options{'blocksize'} ) ne 0 ) {
 	die(sprintf("device %s has a length that is not modulus of %d \n",$options{'device'},$options{'blocksize'})) ;	
     }
+    if ( $options{'destination-server'} =~ /:/ ) {
+	$options{'destination-server'}=$PREMATCH ;
+	$options{'destination-port'}=$PREMATCH ;
+    } else {
+	$options{'destination-port'}=7070 ;
+    }
+} else {
+    if ( $options{'listen'} =~ /:/ ) {
+	$options{'listen'}=$PREMATCH ;
+	$options{'port'}=$PREMATCH ;
+    } else {
+	$options{'port'}=7070 ;
+    }
 }
 #------------------------------------------------------------------------
 if ( $options{'listen'} ) {
     my $sock = new IO::Socket::INET ( LocalHost => $options{'listen'} , 
-				      LocalPort => '7070',
+				      LocalPort => $options{'port'} , ,
 				      Proto => 'tcp',
 				      Listen => 1, 
 				      Reuse => 1 );
@@ -279,10 +293,10 @@ if ( $options{'listen'} ) {
     #--------------------------------------------------------------------
     use IO::Socket;
     my $sock = new IO::Socket::INET ( PeerAddr => $options{'destination-server'} , 
-				      PeerPort => 7070 , 
+				      PeerPort => $options{'destination-port'} , , 
 				      Proto => 'tcp' ); 
     if ( ! $sock ) {
-	die "Could not connect to ".$options{'destination-server'}." ( create socket: $! ) \n" ;
+	die "Could not connect to ".$options{'destination-server'}.":".$options{'destination-port'}." ( create socket: $! ) \n" ;
     }
     binmode $sock ;
     select($sock) ; $|=1 ; select(STDOUT) ;
