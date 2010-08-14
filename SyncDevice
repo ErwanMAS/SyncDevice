@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.12 2010/08/14 08:48:13 mas Exp $
+#  $Id: SyncDevice,v 1.13 2010/08/14 08:49:52 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -106,14 +106,14 @@ if ( ! $options{'listen'} ) {
     }
     if ( $options{'destination-server'} =~ /:/ ) {
 	$options{'destination-server'}=$PREMATCH ;
-	$options{'destination-port'}=$PREMATCH ;
+	$options{'destination-port'}=$POSTMATCH ;
     } else {
 	$options{'destination-port'}=7070 ;
     }
 } else {
     if ( $options{'listen'} =~ /:/ ) {
 	$options{'listen'}=$PREMATCH ;
-	$options{'port'}=$PREMATCH ;
+	$options{'port'}=$POSTMATCH ;
     } else {
 	$options{'port'}=7070 ;
     }
