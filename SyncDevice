@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.15 2011/08/27 19:46:14 mas Exp $
+#  $Id: SyncDevice,v 1.16 2011/08/27 22:17:34 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -161,8 +161,9 @@ if ( $options{'listen'} ) {
 		$device_local_offset=&ReadOffset("please enter the current offset (0,32256,...) for synchronize:\n") ;
 		if ( $device_local && defined($device_local_offset) ) {
 		    my ($sd,$sdb)=&DeviceSize($device_local) ;
-		    if ( ( $sync_length + $device_local_offset ) < $sd ) {
+		    if ( ( $sync_length + $device_local_offset ) <= $sd ) {
 			#-------------------------------------------------
+			&Debug("[debug] ok with request '%s' => '%s'\@%d \n", $device_distant ,$device_local,$device_local_offset) ;
 			SendCmd($new_sock,'OK DEVICE') ;
 			$sync_pos=0 ;
 			$count_ok=0;
@@ -174,7 +175,7 @@ if ( $options{'listen'} ) {
 			$thr_write=threads->new(\&BlockWriter,$device_local,$device_local_offset,$sync_length) ;
 			#-------------------------------------------------
 		    } else {
-			&Debug("[debug] pb with request ( %d + %d >= %d )\n", $sync_length , $device_local_offset , $sd ) ;
+			&Debug("[debug] pb with request ( %d + %d > %d )\n", $sync_length , $device_local_offset , $sd ) ;
 			SendCmd($new_sock,'KO DEVICE') ;
 		    }
 		} else {
@@ -265,6 +266,7 @@ if ( $options{'listen'} ) {
 		#-------------------------------------------------------
 	    } else {
 		#-------------------------------------------------------
+		Debug("[error] BOGUS") ;
 		print unpack( 'H*', $l),"\n" ; 
 		print join(' ',split(//,$l)),"\n" ; 
 		#-------------------------------------------------------
@@ -494,6 +496,7 @@ sub ComputeChecksum {
 sub DeviceSize {
     if ( -b $_[0] ) {
 	my $sb =`blockdev  --getsize64 $_[0] 2>&1 ` ;
+        chomp($sb) ;
 	my $sbk ;
         if ( $sb !~ /^\d+$/ ) {
 	    $sb =`blockdev  --getsize $_[0] 2>&1 ` ;
