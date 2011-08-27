@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.14 2010/08/14 09:58:13 mas Exp $
+#  $Id: SyncDevice,v 1.15 2011/08/27 19:46:14 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -52,7 +52,7 @@ my %debug_level_2_print=( 'debug'   => 5,
 my $debug=0 ;
 #
 my %options ;
-GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","offset=i","blocksize=i","toleratefile","compress=s");
+GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","offset=i","blocksize=i","toleratefile","compress=s","truncate","bufferfactor=i");
 #
 if ( defined($options{'verbose'} ) ) {
     if ( $debug_level_2_print{$options{'verbose'}} ) {
@@ -66,6 +66,9 @@ if ( ! $options{'listen'} ) {
     if ( ! $options{'destination-server'} ||  ! $options{'device'} ) {
 	die(" need a --device / --destination-server options\n") ;
     }
+}
+if ( ! $options{'bufferfactor'} ) {
+    $options{'bufferfactor'}=1 ;
 }
 if ( ! $options{'offset'} ) {
     $options{'offset'}=0 ;
@@ -102,7 +105,12 @@ if ( ! $options{'listen'} ) {
 	($sync_length,$sync_length_block)=DeviceSize($options{'device'},1) ;
     }
     if ( ( $sync_length % $options{'blocksize'} ) ne 0 ) {
-	die(sprintf("device %s has a length that is not modulus of %d \n",$options{'device'},$options{'blocksize'})) ;	
+	if ( $options{"truncate"} ) {
+	    $sync_length=$sync_length-( $sync_length % $options{'blocksize'} ) ;
+	    $sync_length_block=$sync_length/512 ;
+	} else {
+	    die(sprintf("device %s has a length that is not modulus of %d \n",$options{'device'},$options{'blocksize'})) ;	
+	}
     }
     if ( $options{'destination-server'} =~ /:/ ) {
 	$options{'destination-server'}=$PREMATCH ;
@@ -446,7 +454,7 @@ sub ComputeChecksum {
     $cksum_pos=0 ;
     binmode DEVCKSUM ;
     #--------------------------------------------------------------------
-    my $factor=(268435456/$options{'blocksize'}) ;
+    my $factor=(268435456/$options{'blocksize'})*$options{'bufferfactor'} ;
     #--------------------------------------------------------------------
     while ( $cksum_pos  < $sync_size ) {
 	if ( $cksum_pos > $sync_pos + $factor*$options{'blocksize'} ) {
