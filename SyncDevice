@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.16 2011/08/27 22:17:34 mas Exp $
+#  $Id: SyncDevice,v 1.17 2011/09/01 11:04:04 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -89,6 +89,7 @@ my $sync_length_block : shared ;
 my $cksum_pos         : shared ;
 my $count_ok ;
 my $count_ko ;
+my $network_bytes_receive ;
 my $sync_starttime ;
 my $sync_curtime ;
 my $sync_endtime ;
@@ -168,6 +169,7 @@ if ( $options{'listen'} ) {
 			$sync_pos=0 ;
 			$count_ok=0;
 			$count_ko=0;
+			$network_bytes_receive=0 ;
 			$sync_starttime=time();
 			$sync_curtime=time()+90 ;
 			#-------------------------------------------------
@@ -218,6 +220,7 @@ if ( $options{'listen'} ) {
 		my $buf ;
 		my $nr=read($new_sock,$buf,$options{'blocksize'} ) ;
 		if ( $nr == $options{'blocksize'} ) {
+		    $network_bytes_receive+=$options{'blocksize'} ;
 		    Debug("[debug] .... currently receive .... DONE ") ;
 		    while ( $queue_4_writing_block->pending() > 60 ) {
 			sleep(2) ;
@@ -243,6 +246,7 @@ if ( $options{'listen'} ) {
 		my $buf_cmp ;
 		my $nr=read($new_sock,$buf_cmp,$dat_siz) ;
 		if ( $nr == $dat_siz ) {
+		    $network_bytes_receive+=$dat_siz ;
 		    Debug("[debug] .... currently receive .... DONE ") ;
 		    while ( $queue_4_writing_block->pending() > 60 ) {
 			sleep(2) ;
@@ -280,9 +284,10 @@ if ( $options{'listen'} ) {
 	    #------------------------------------------------------------
 	    if ( $sync_curtime < time()  ) {
 		$sync_curtime=time()+90 ;
-		Debug("Stats Sync : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s remaining time %s\n",
+		Debug("Stats Sync : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s remaining time %s | net %d bytes for %d bytes \n",
 		      $sync_pos,$sync_length,$count_ok,$count_ko,(time()-$sync_starttime),
-		      int(((time()-$sync_starttime)/ ($sync_pos+1))*$sync_length)-(time()-$sync_starttime) ) ;
+		      int(((time()-$sync_starttime)/ ($sync_pos+1))*$sync_length)-(time()-$sync_starttime) ,
+		      $network_bytes_receive , $count_ko*$options{'blocksize'} ) ;
 	    }
 	    #------------------------------------------------------------
 	    $l=undef ;
