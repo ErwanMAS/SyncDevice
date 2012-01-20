@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.18 2011/09/08 07:09:19 mas Exp $
+#  $Id: SyncDevice,v 1.19 2012/01/20 10:21:46 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -255,7 +255,7 @@ if ( $options{'listen'} ) {
 		if ( $nr == $options{'blocksize'} ) {
 		    $network_bytes_receive+=$options{'blocksize'} ;
 		    Debug("[debug] .... currently receive .... DONE ") ;
-		    while ( $queue_4_writing_block->pending() > 60 ) {
+		    while ( $queue_4_writing_block->pending() > 120 ) {
 			sleep(2) ;
 			Debug('[notice] BlockWriter too slow') ;
 		    }
@@ -281,7 +281,7 @@ if ( $options{'listen'} ) {
 		if ( $nr == $dat_siz ) {
 		    $network_bytes_receive+=$dat_siz ;
 		    Debug("[debug] .... currently receive .... DONE ") ;
-		    while ( $queue_4_writing_block->pending() > 60 ) {
+		    while ( $queue_4_writing_block->pending() > 120 ) {
 			sleep(2) ;
 			Debug('[notice] BlockWriter too slow') ;
 		    }
@@ -462,7 +462,7 @@ sub SendBlockData {
 	    print $s $buf ;
 	} else {
 	    use bytes ;
-	    my $buf_cmp=compress($buf) ;
+	    my $buf_cmp=compress($buf,9) ;
 	    printf $s "BLOCK DATA COMPRESS ".$p." %d \n",length($buf_cmp) ;
 	    Debug(sprintf("[debug] .... starting transmiting block ".$p." compress %d",length($buf_cmp))) ;
 	    print  $s $buf_cmp ;
