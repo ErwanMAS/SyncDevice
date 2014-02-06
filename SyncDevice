@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.19 2012/01/20 10:21:46 mas Exp $
+#  $Id: SyncDevice,v 1.20 2014/02/06 12:25:47 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -33,8 +33,7 @@ use threads;
 use threads::shared;
 use Thread::Queue ;
 use IO::Socket; 
-use Digest::SHA1  qw(sha1_hex) ;
-use Digest::SHA   qw(sha512_hex) ;
+use Digest::SHA   qw(sha1_hex sha512_hex) ;
 use Digest::MD5   qw(md5_hex) ;
 use Digest::MD4   qw(md4_hex) ;
 use Time::HiRes qw(usleep) ;
@@ -163,8 +162,8 @@ if ( $options{'listen'} ) {
 	my $new_sock = $sock->accept(); 
 	binmode $new_sock ;
 	select($new_sock) ; $|=1 ; select(STDOUT) ;
-	while(<$new_sock>) {
-	    my $l=$_ ;
+	while(!eof($new_sock) ) {
+	    my $l=<$new_sock> ;
 	    chomp($l) ;
 	    if ( $l =~ /^DEVICE ([^\s]+)\s+(\d+)\s+(\d+)\s+((SECURE)|(FAST))(\s*|(\s+([^\s]+)\s+(\d+)\s*))$/ ) {
 		$device_distant=$1 ;
@@ -311,8 +310,12 @@ if ( $options{'listen'} ) {
 	    #------------------------------------------------------------
 	    if ( $sync_pos >= $sync_length ) {
 		$sync_endtime=time() ;
+		$queue_4_writing_block->enqueue('EOF') ;
+		$thr_cksum->join() ;
+		$thr_write->join() ;
 		Debug("OK sync done : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s \n",
 		      $sync_pos,$sync_length,$count_ok,$count_ko,($sync_endtime-$sync_starttime) ) ;
+		close($new_sock);
 	    }
 	    #------------------------------------------------------------
 	    if ( $sync_curtime < time()  ) {
@@ -389,11 +392,14 @@ if ( $options{'listen'} ) {
 	    }
 	}
 	#
+	$thr_cksum->join() ;
+	Debug("OK sync done \n") ;
+	#
     } else {
 	Debug("PB sending DEVICE\n") ;
     }
     #
-    sleep(3600*10) ;
+    sleep(10) ;
     #--------------------------------------------------------------------
     close($sock);
     #--------------------------------------------------------------------
@@ -411,7 +417,10 @@ sub BlockWriter {
 	    $last_write=$pos ;
 	    $pos=undef ;
 	    $dat=undef ;
-	} else {
+	} elsif ( $what eq 'EOF' ) {
+	    Debug('[notice] done thread BlockWriter') ;
+	    return ;
+ 	} else {
 	    Debug("[error] BlockWriter bad args '%s'",$what) ;
 	}
 	$what=undef ;
@@ -423,7 +432,7 @@ sub WriteBlockData {
     my $p=$_[1] ;
     my $b=$_[2] ;
     #----------------------
-    if ( ! sysopen(DEVTOWRITE,$d, O_LARGEFILE | O_RDWR) ) {
+    if ( ! sysopen(DEVTOWRITE,$d, O_LARGEFILE | O_RDWR | O_SYNC ) ) {
         Debug("PB open device '%s'\n",$d) ;
         exit 1 ;
     }
@@ -551,6 +560,7 @@ sub ComputeChecksum {
     }
     close(DEVCKSUM) ;
     #--------------------------------------------------------------------
+    Debug('done cksum thread on %s',$device_to_read) ;
 }
 #----------------------------------------------------------------------------------------------
 sub DeviceSize {
@@ -709,7 +719,7 @@ dd if=/dev/random of=/dev/xen_hdd/TestSyncDevice bs=512
 #------------------------------------------------------------------------
 
 pb conso memoirre avec des petit blocks
-pb thread de cksum qu'il faut arreter quand le client abort
+pb thread de cksum qu il faut arreter quand le client abort
 prevoir une progress bar
 
 
@@ -718,4 +728,27 @@ prevoir une purge
 
 
 OK SendCmd BLOCK 14898167808 OK
+#------------------------------------------------------------------------
+DEVICE <remote device> <lengths byte> <blocksize> (FAST|SECURE) <local device> <local offset>
+
+CKSUM <pos> <digest1> <digest2>
+BLOCK <pos> OK
+NEED DATA <pos>
+
+BLOCK DATA <pos>
+BLOCK DATA COMPRESS <pos> <compressed size>
+
+#----
+
+
+
+#----
+
+CKSUM PARTIAL <pos> <size> <digest1> <digest2>
+BLOCK PARTIAL <pos> <partial size> OK
+NEED DATA PARTIAL <pos> <partial size> 
+
+BLOCK DATA PARTIAL <pos> <partial size>
+BLOCK DATA PARTIAL COMPRESS <pos> <partial size>
+
 #------------------------------------------------------------------------
