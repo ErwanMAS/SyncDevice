@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.20 2014/02/06 12:25:47 mas Exp $
+#  $Id: SyncDevice,v 1.21 2014/02/06 12:40:23 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -53,7 +53,7 @@ my %debug_level_2_print=( 'debug'   => 5,
 my $debug=0 ;
 #
 my %options ;
-GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","mode=s","auto-accept","destination-device=s","destination-offset=i",
+GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","mode=s","auto-accept","destination-device=s","destination-offset=i","filter-remote=s",
 	              "offset=i","blocksize=i","toleratefile","compress=s","truncate","bufferfactor=i");
 #
 if ( defined($options{'verbose'} ) ) {
@@ -159,7 +159,16 @@ if ( $options{'listen'} ) {
     my $device_distant="" ;
     #
     while ( $state == 0 ) {
-	my $new_sock = $sock->accept(); 
+	my ($new_sock,$remote_addr) = $sock->accept(); 
+	#----------------------------------------------------------------
+	my ($port, $ip) = sockaddr_in $remote_addr;
+	my $ipnum       = inet_ntoa   $ip;
+	if ( $options{'filter-remote'} && $options{'filter-remote'} ne $ipnum ) {
+	    &Debug('REJECT connection from "%s"',$ipnum) ;
+	    close($new_sock);
+	    next ;
+	}
+	#----------------------------------------------------------------
 	binmode $new_sock ;
 	select($new_sock) ; $|=1 ; select(STDOUT) ;
 	while(!eof($new_sock) ) {
