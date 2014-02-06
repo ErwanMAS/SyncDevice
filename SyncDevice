@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.21 2014/02/06 12:40:23 mas Exp $
+#  $Id: SyncDevice,v 1.22 2014/02/07 00:34:38 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -32,6 +32,7 @@ use Fcntl ;
 use threads;
 use threads::shared;
 use Thread::Queue ;
+use IO::Select;
 use IO::Socket; 
 use Digest::SHA   qw(sha1_hex sha512_hex) ;
 use Digest::MD5   qw(md5_hex) ;
@@ -54,7 +55,7 @@ my $debug=0 ;
 #
 my %options ;
 GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","mode=s","auto-accept","destination-device=s","destination-offset=i","filter-remote=s",
-	              "offset=i","blocksize=i","toleratefile","compress=s","truncate","bufferfactor=i");
+	              "offset=i","blocksize=i","toleratefile","compress=s","truncate","bufferfactor=i","stats-interval=i");
 #
 if ( defined($options{'verbose'} ) ) {
     if ( $debug_level_2_print{$options{'verbose'}} ) {
@@ -74,6 +75,9 @@ if ( ! $options{'bufferfactor'} ) {
 }
 if ( ! $options{'offset'} ) {
     $options{'offset'}=0 ;
+}
+if ( ! $options{'stats-interval'} ) {
+    $options{'stats-interval'}=90 ;
 }
 if ( ! $options{'mode'} ) {
     $options{'mode'}="secure" ;
@@ -208,7 +212,7 @@ if ( $options{'listen'} ) {
 			$count_ko=0;
 			$network_bytes_receive=0 ;
 			$sync_starttime=time();
-			$sync_curtime=time()+90 ;
+			$sync_curtime=time()+$options{'stats-interval'} ;
 			#-------------------------------------------------
 			$thr_cksum=threads->new(\&ComputeChecksum,$device_local,$device_local_offset,$sync_length) ;
 			$thr_write=threads->new(\&BlockWriter,$device_local,$device_local_offset,$sync_length) ;
@@ -328,7 +332,7 @@ if ( $options{'listen'} ) {
 	    }
 	    #------------------------------------------------------------
 	    if ( $sync_curtime < time()  ) {
-		$sync_curtime=time()+90 ;
+		$sync_curtime=time()+$options{'stats-interval'} ;
 		Debug("Stats Sync : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s remaining time %s | net %d bytes for %d bytes \n",
 		      $sync_pos,$sync_length,$count_ok,$count_ko,(time()-$sync_starttime),
 		      int(((time()-$sync_starttime)/ ($sync_pos+1))*$sync_length)-(time()-$sync_starttime) ,
@@ -351,7 +355,6 @@ if ( $options{'listen'} ) {
     #--------------------------------------------------------------------
 } else {
     #--------------------------------------------------------------------
-    use IO::Socket;
     my $sock = new IO::Socket::INET ( PeerAddr => $options{'destination-server'} , 
 				      PeerPort => $options{'destination-port'} , , 
 				      Proto => 'tcp' ); 
@@ -361,6 +364,9 @@ if ( $options{'listen'} ) {
     binmode $sock ;
     select($sock) ; $|=1 ; select(STDOUT) ;
     #--------------------------------------------------------------------
+    my $sel_sock = IO::Select->new( $sock );
+    my $cmd_in_window=0 ;
+    #-------------------------------
     my $cmd; 
     if ( $options{'destination-device'} && defined ( $options{'destination-offset'} ) ) {
 	$cmd=sprintf("DEVICE %s %s %s %s %s %s",
@@ -378,18 +384,28 @@ if ( $options{'listen'} ) {
 	my $last_display=time() ;
 	#
 	while ( $sync_pos < $sync_length ) {
-	    if ( $block_checksum{$sync_pos} ) {
-		my $r=SendCmdAndWait($sock,sprintf("CKSUM %s :%s:%s:",$sync_pos,
-						   $block_checksum{$sync_pos}->{'md5'},$block_checksum{$sync_pos}->{'sha1'})) ;
-		if ( $r =~ /^\s*BLOCK $sync_pos OK\s*$/ ) {
-		    lock($sync_pos) ;
-		    $sync_pos+=$options{'blocksize'} ;
-		} elsif ( $r =~ /^\s*NEED DATA $sync_pos\s*$/ ) {
-		    &SendBlockData($sock,$options{'device'},$sync_pos) ;
-		    lock($sync_pos) ;
-		    $sync_pos+=$options{'blocksize'} ;
+	    my $sync_pos_next_to_send=$sync_pos+$cmd_in_window*$options{'blocksize'} ;
+	    if ( $block_checksum{$sync_pos_next_to_send} || ( $sync_pos_next_to_send ==  $sync_length  ) ) {
+		if ( $sync_pos_next_to_send < $sync_length && ( $cmd_in_window < 1024 ) && $block_checksum{$sync_pos_next_to_send} ) {
+		    my $r=SendCmd($sock,sprintf("CKSUM %s :%s:%s:",$sync_pos_next_to_send,
+						$block_checksum{$sync_pos_next_to_send}->{'md5'},$block_checksum{$sync_pos_next_to_send}->{'sha1'})) ;
+		    $cmd_in_window++ ;
 		}
-		PurgeBlockCheckSum($sync_pos);
+		if ( $sel_sock->can_read(0.000001) ) {
+		    my $r=SendCmdAndWait($sock,undef) ;
+		    if ( $r =~ /^\s*BLOCK $sync_pos OK\s*$/ ) {
+			lock($sync_pos);
+			$sync_pos+=$options{'blocksize'} ;
+		    } elsif ( $r =~ /^\s*NEED DATA $sync_pos\s*$/ ) {
+			&SendBlockData($sock,$options{'device'},$sync_pos) ;
+			lock($sync_pos);
+			$sync_pos+=$options{'blocksize'} ;
+		    }
+		    PurgeBlockCheckSum($sync_pos);
+		    if ( $cmd_in_window ) {
+			$cmd_in_window-- ;
+		    }
+		}
 	    } else {
 		if ( defined ( $cksum_pos ) ) {
 		    if ( ( time() - $last_display ) > 10 ) {
@@ -603,6 +619,10 @@ sub DeviceSize {
 sub SendCmd {
     my $s = $_[0] ;
     my $t = $_[1] ;
+    #----------------------------------
+    if ( ! defined($t) ) {
+	return 1 ;
+    }
     #----------------------------------
     if ( print $s $t."\n" ) {
 	Debug("[debug] OK SendCmd %s\n",$t) ;
