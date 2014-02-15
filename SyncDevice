@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.29 2014/02/15 19:52:10 mas Exp $
+#  $Id: SyncDevice,v 1.30 2014/02/16 00:01:18 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -36,9 +36,11 @@ use threads::shared;
 use Thread::Queue ;
 use IO::Select;
 use IO::Socket; 
-use Digest::SHA   qw(sha1_hex sha512_hex) ;
-use Digest::MD5   qw(md5_hex) ;
-use Digest::MD4   qw(md4_hex) ;
+use Digest::SHA   qw(sha1_base64 sha512_base64) ;
+use Digest::MD5   qw(md5_base64) ;
+use Digest::MD4   qw(md4_base64) ;
+use Digest::EdonR qw(edonr_512_base64 edonr_384_base64 ) ;
+use Digest::Skein qw(skein_1024_base64) ;
 use Time::HiRes qw(usleep) ;
 use File::Basename ;
 use English;
@@ -88,8 +90,8 @@ if ( ! $options{'mode'} ) {
     $options{'mode'}="secure" ;
 } else {
     if ( ! $options{'listen'} ) {
-	if ( ! ( ( $options{'mode'} eq 'secure' ) || ( $options{'mode'} eq 'fast' ) ) ) {
-	    die(sprintf("mode is not secure and not fast.\n",$options{'mode'})) ;
+	if ( ! ( ( $options{'mode'} eq 'secure' ) || ( $options{'mode'} eq 'fast' ) || ( $options{'mode'} eq 'ultra' ) ) ) {
+	    die(sprintf("mode is not secure and not fast and not ultra .\n",$options{'mode'})) ;
 	}
     } else {
 	die("option mode is not available in daemon mode.\n") ;
@@ -188,7 +190,7 @@ if ( $options{'listen'} ) {
 	    if ( ! defined($l) ) {
 		last ;
 	    }
-	    if ( $l =~ /^DEVICE ([^\s]+)\s+(\d+)\s+(\d+)\s+((SECURE)|(FAST))(\s*|(\s+([^\s]+)\s+(\d+)\s*))$/ ) {
+	    if ( $l =~ /^DEVICE ([^\s]+)\s+(\d+)\s+(\d+)\s+((SECURE)|(FAST)|(ULTRA))(\s*|(\s+([^\s]+)\s+(\d+)\s*))$/ ) {
 		$device_distant=$1 ;
 		$sync_length=$2 ;
 		$options{'blocksize'}=$3 ;
@@ -636,12 +638,15 @@ sub ComputeChecksum {
 		if ( $nread == $options{'blocksize'} ) {
 		    my %h : shared  ;
 		    $h{'pos'}=$cksum_pos ;
-		    if ( $options{'mode'} eq 'fast' ) {
-			$h{'md5'}=md4_hex($buf) ;
+		    if ( $options{'mode'} eq 'ultra' ) {
+			$h{'md5'}=substr(edonr_512_base64($buf),0,11) ;
 			$h{'sha1'}='X' ;
+		    } elsif ( $options{'mode'} eq 'fast' ) {
+			$h{'md5'}=md4_base64($buf) ;
+			$h{'sha1'}=edonr_384_base64($buf) ;
 		    } else {
-			$h{'md5'}=md4_hex($buf) ;
-			$h{'sha1'}=sha512_hex($buf) ;
+			$h{'md5'}=skein_1024_base64($buf) ;
+			$h{'sha1'}=sha512_base64($buf) ;
 		    }
 		    lock(%block_checksum) ;
 		    $block_checksum{$cksum_pos}=\%h ;
@@ -873,7 +878,7 @@ prevoir une purge
 
 OK SendCmd BLOCK 14898167808 OK
 #------------------------------------------------------------------------
-DEVICE <remote device> <lengths byte> <blocksize> (FAST|SECURE) <local device> <local offset>
+DEVICE <remote device> <lengths byte> <blocksize> (ULTRA|FAST|SECURE) <local device> <local offset>
 
 C <pos> <digest1> <digest2>
 B <pos> OK
