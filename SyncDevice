@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.24 2014/02/08 12:20:38 mas Exp $
+#  $Id: SyncDevice,v 1.25 2014/02/15 18:14:00 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -55,7 +55,7 @@ my $debug=0 ;
 #
 my %options ;
 GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","mode=s","auto-accept","destination-device=s","destination-offset=i","filter-remote=s",
-	              "offset=i","blocksize=i","toleratefile","compress=s","truncate","bufferfactor=i","stats-interval=i","sync-window=i");
+	              "offset=i","blocksize=i","toleratefile","compress=s","truncate","bufferfactor=i","stats-interval=i","sync-window=i","display-ko");
 #
 if ( defined($options{'verbose'} ) ) {
     if ( $debug_level_2_print{$options{'verbose'}} ) {
@@ -109,7 +109,9 @@ my $sync_length_block : shared ;
 my $cksum_pos         : shared ;
 my $count_ok ;
 my $count_ko ;
+my $list_ko ;
 my $network_bytes_receive ;
+my $network_block_receive ;
 my $sync_starttime ;
 my $sync_curtime ;
 my $sync_endtime ;
@@ -216,7 +218,9 @@ if ( $options{'listen'} ) {
 			$sync_pos=0 ;
 			$count_ok=0;
 			$count_ko=0;
+			$list_ko=[];
 			$network_bytes_receive=0 ;
+			$network_block_receive=0 ;
 			$sync_starttime=time();
 			$sync_curtime=time()+$options{'stats-interval'} ;
 			#-------------------------------------------------
@@ -262,6 +266,7 @@ if ( $options{'listen'} ) {
 		} else {
 		    SendCmd($new_sock,"NEED DATA $cur_pos") ;		    
 		    $count_ko++ ;
+		    push @{$list_ko} , $cur_pos ;
 		}
 		#-------------------------------------------------------
 	    } elsif ($l=~ /^\s*BLOCK DATA\s+(\d+)\s*/ ) {
@@ -283,6 +288,7 @@ if ( $options{'listen'} ) {
 		}
 		if ( $nr == $options{'blocksize'} ) {
 		    $network_bytes_receive+=$options{'blocksize'} ;
+		    $network_block_receive++ ;
 		    Debug("[debug] .... currently receive .... DONE ") ;
 		    while ( $queue_4_writing_block->pending() > 120 ) {
 			sleep(2) ;
@@ -320,6 +326,7 @@ if ( $options{'listen'} ) {
 		}
 		if ( $nr == $dat_siz ) {
 		    $network_bytes_receive+=$dat_siz ;
+		    $network_block_receive++ ;
 		    Debug("[debug] .... currently receive .... DONE ") ;
 		    while ( $queue_4_writing_block->pending() > 120 ) {
 			sleep(2) ;
@@ -361,14 +368,19 @@ if ( $options{'listen'} ) {
 		Debug("[debug] join write .... DONE ") ;
 		Debug("OK sync done : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s \n",
 		      $sync_pos,$sync_length,$count_ok,$count_ko,($sync_endtime-$sync_starttime) ) ;
+		if ( $options{'display-ko'} && scalar(@{$list_ko}) ) {
+		    my $str=join(',',@{$list_ko}) ;
+		    $str=~ s/(.{70,90},)/$1\n/g ;
+		    Debug("Display Ko:\n".$str) ;
+		}
 		close($new_sock);
 		last ;
 	    }
 	    #------------------------------------------------------------
 	    if ( $sync_curtime < time()  ) {
 		$sync_curtime=time()+$options{'stats-interval'} ;
-		Debug("Stats Sync : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s remaining time %s | net %d bytes for %d bytes \n",
-		      $sync_pos,$sync_length,$count_ok,$count_ko,(time()-$sync_starttime),
+		Debug("Stats Sync : s_pos %s s_length %s b_ok %s b_ko %s b_wrt %s timing %s remaining time %s | net %d bytes for %d bytes \n",
+		      $sync_pos,$sync_length,$count_ok,$count_ko,$network_block_receive,(time()-$sync_starttime),
 		      int(((time()-$sync_starttime)/ ($sync_pos+1))*$sync_length)-(time()-$sync_starttime) ,
 		      $network_bytes_receive , $count_ko*$options{'blocksize'} ) ;
 	    }
@@ -422,12 +434,6 @@ if ( $options{'listen'} ) {
 	    my $sync_pos_next_to_send=$sync_pos+$cmd_in_window*$options{'blocksize'} ;
 	    if ( $block_checksum{$sync_pos_next_to_send} || ( $sync_pos_next_to_send ==  $sync_length  ) ) {
 		Debug("[debug] sync_pos_next_to_send : %s : sync_length %s : cmd_in_window %s ",$sync_pos_next_to_send,$sync_length,$cmd_in_window) ;
-		if ( $sync_pos_next_to_send < $sync_length && ( $cmd_in_window < $options{'sync-window'} ) && $block_checksum{$sync_pos_next_to_send} ) {
-		    my $r=SendCmd($sock,sprintf("CKSUM %s :%s:%s:",$sync_pos_next_to_send,
-						$block_checksum{$sync_pos_next_to_send}->{'md5'},$block_checksum{$sync_pos_next_to_send}->{'sha1'})) ;
-		    Debug("[debug] send CKSUM %s : cmd_in_window %s ",$sync_pos_next_to_send,$cmd_in_window) ;
-		    $cmd_in_window++ ;
-		}
 		if ( $sel_sock->can_read(0) ) {
 		    my $r=SendCmdAndWait($sock,undef) ;
 		    if ( $r =~ /^\s*BLOCK $sync_pos OK\s*$/ ) {
@@ -444,6 +450,12 @@ if ( $options{'listen'} ) {
 		    }
 		} else {
 		    Debug("[debug] nothing to read") ;
+		    if ( $sync_pos_next_to_send < $sync_length && ( $cmd_in_window < $options{'sync-window'} ) && $block_checksum{$sync_pos_next_to_send} ) {
+			my $r=SendCmd($sock,sprintf("CKSUM %s :%s:%s:",$sync_pos_next_to_send,
+						    $block_checksum{$sync_pos_next_to_send}->{'md5'},$block_checksum{$sync_pos_next_to_send}->{'sha1'})) ;
+			Debug("[debug] send CKSUM %s : cmd_in_window %s ",$sync_pos_next_to_send,$cmd_in_window) ;
+			$cmd_in_window++ ;
+		    }
 		}
 	    } else {
 		my $must_read=$sel_sock->can_read(0.001) ;
@@ -451,8 +463,8 @@ if ( $options{'listen'} ) {
 		    Debug("[debug] we must wait ... cmd_in_window %s ... sync_pos_next_to_send %s ",$cmd_in_window,$sync_pos_next_to_send) ;
 		    if ( defined ( $cksum_pos ) && $sync_pos_next_to_send ) {
 			if ( ( time() - $last_display ) > 10 ) {
-			    Debug('[notice] ComputeChecksum too slow / Waiting :cksum_pos %s : sync_pos %s (%s) : sync_pos_next_to_send :%s ',
-				  $cksum_pos,$sync_pos,scalar(keys %block_checksum),$sync_pos_next_to_send) ;
+			    Debug('[notice] ComputeChecksum too slow / Waiting :cksum_pos %s : sync_pos %s (blk %s) : sync_pos_next_to_send :%s ( win %s ) ',
+				  $cksum_pos,$sync_pos,scalar(keys %block_checksum),$sync_pos_next_to_send,$cmd_in_window ) ;
 			    $last_display=time() ;
 			}
 			while ( ( $sync_pos_next_to_send == $cksum_pos ) || ! $must_read ) {
