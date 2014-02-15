@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.25 2014/02/15 18:14:00 mas Exp $
+#  $Id: SyncDevice,v 1.26 2014/02/15 18:21:12 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -236,7 +236,7 @@ if ( $options{'listen'} ) {
 		    SendCmd($new_sock,'KO DEVICE') ;
 		}
 		#-------------------------------------------------------
-	    } elsif ($l=~ /^\s*CKSUM\s+(\d+)\s+:([^:]+):([^:+]+)\s*/ ) {
+	    } elsif ($l=~ /^\s*C\s+(\d+)\s+:([^:]+):([^:+]+)\s*/ ) {
 		#---------------------------
 		my $cur_pos=$1 ;
 		my $cur_md5=$2 ;
@@ -259,7 +259,7 @@ if ( $options{'listen'} ) {
 		if ( ( $block_checksum{$cur_pos}->{'md5'} eq $cur_md5 ) &&
 		     ( $block_checksum{$cur_pos}->{'sha1'} eq $cur_sha1 ) ) {
 		    $count_ok++ ;
-		    SendCmd($new_sock,"BLOCK $cur_pos OK") ;
+		    SendCmd($new_sock,"B $cur_pos OK") ;
 		    lock($sync_pos) ;
 		    $sync_pos+=$options{'blocksize'} ;
 		    PurgeBlockCheckSum($sync_pos);
@@ -432,11 +432,11 @@ if ( $options{'listen'} ) {
 	while ( $sync_pos < $sync_length ) {
 	    #
 	    my $sync_pos_next_to_send=$sync_pos+$cmd_in_window*$options{'blocksize'} ;
-	    if ( $block_checksum{$sync_pos_next_to_send} || ( $sync_pos_next_to_send ==  $sync_length  ) ) {
+	    if ( $block_checksum{$sync_pos_next_to_send} || ( $sync_pos_next_to_send ==  $sync_length  ) || ( $sel_sock->can_read(0) ) ) {
 		Debug("[debug] sync_pos_next_to_send : %s : sync_length %s : cmd_in_window %s ",$sync_pos_next_to_send,$sync_length,$cmd_in_window) ;
 		if ( $sel_sock->can_read(0) ) {
 		    my $r=SendCmdAndWait($sock,undef) ;
-		    if ( $r =~ /^\s*BLOCK $sync_pos OK\s*$/ ) {
+		    if ( $r =~ /^\s*B $sync_pos OK\s*$/ ) {
 			lock($sync_pos);
 			$sync_pos+=$options{'blocksize'} ;
 		    } elsif ( $r =~ /^\s*NEED DATA $sync_pos\s*$/ ) {
@@ -451,7 +451,7 @@ if ( $options{'listen'} ) {
 		} else {
 		    Debug("[debug] nothing to read") ;
 		    if ( $sync_pos_next_to_send < $sync_length && ( $cmd_in_window < $options{'sync-window'} ) && $block_checksum{$sync_pos_next_to_send} ) {
-			my $r=SendCmd($sock,sprintf("CKSUM %s :%s:%s:",$sync_pos_next_to_send,
+			my $r=SendCmd($sock,sprintf("C %s :%s:%s:",$sync_pos_next_to_send,
 						    $block_checksum{$sync_pos_next_to_send}->{'md5'},$block_checksum{$sync_pos_next_to_send}->{'sha1'})) ;
 			Debug("[debug] send CKSUM %s : cmd_in_window %s ",$sync_pos_next_to_send,$cmd_in_window) ;
 			$cmd_in_window++ ;
@@ -459,7 +459,10 @@ if ( $options{'listen'} ) {
 		}
 	    } else {
 		my $must_read=$sel_sock->can_read(0.001) ;
-		if ( $cmd_in_window == 0 || ( ! $must_read ) || ( ! defined($cksum_pos) ) || ( $sync_pos_next_to_send == $cksum_pos ) ) {
+		if ( ! defined($must_read) ) {
+		    $must_read=0 ;
+		}
+		if ( ( ! $must_read ) && ( $cmd_in_window == 0 || ( ! defined($cksum_pos) ) || ( $sync_pos_next_to_send == $cksum_pos ) ) ) {
 		    Debug("[debug] we must wait ... cmd_in_window %s ... sync_pos_next_to_send %s ",$cmd_in_window,$sync_pos_next_to_send) ;
 		    if ( defined ( $cksum_pos ) && $sync_pos_next_to_send ) {
 			if ( ( time() - $last_display ) > 10 ) {
@@ -467,8 +470,11 @@ if ( $options{'listen'} ) {
 				  $cksum_pos,$sync_pos,scalar(keys %block_checksum),$sync_pos_next_to_send,$cmd_in_window ) ;
 			    $last_display=time() ;
 			}
-			while ( ( $sync_pos_next_to_send == $cksum_pos ) || ! $must_read ) {
+			while ( ( ! $must_read  ) && ( $sync_pos_next_to_send == $cksum_pos )) {
 			    $must_read=$sel_sock->can_read(0.001) ;
+			    if ( ! defined($must_read) ) {
+				$must_read=0 ;
+			    }
 			}
 		    } else {
 			sleep(1) ;
@@ -628,7 +634,7 @@ sub ComputeChecksum {
 		    $h{'pos'}=$cksum_pos ;
 		    if ( $options{'mode'} eq 'fast' ) {
 			$h{'md5'}=md4_hex($buf) ;
-			$h{'sha1'}=$h{'md5'} ;
+			$h{'sha1'}='X' ;
 		    } else {
 			$h{'md5'}=md4_hex($buf) ;
 			$h{'sha1'}=sha512_hex($buf) ;
@@ -865,8 +871,8 @@ OK SendCmd BLOCK 14898167808 OK
 #------------------------------------------------------------------------
 DEVICE <remote device> <lengths byte> <blocksize> (FAST|SECURE) <local device> <local offset>
 
-CKSUM <pos> <digest1> <digest2>
-BLOCK <pos> OK
+C <pos> <digest1> <digest2>
+B <pos> OK
 NEED DATA <pos>
 
 BLOCK DATA <pos>
