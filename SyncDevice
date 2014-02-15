@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.27 2014/02/15 18:34:04 mas Exp $
+#  $Id: SyncDevice,v 1.28 2014/02/15 18:37:21 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -464,10 +464,6 @@ if ( $options{'listen'} ) {
 		    }
 		}
 	    } else {
-		my $must_read=$sel_sock->can_read(0.001) ;
-		if ( ! defined($must_read) ) {
-		    $must_read=0 ;
-		}
 		if ( ( ! $must_read ) && ( $cmd_in_window == 0 || ( ! defined($cksum_pos) ) || ( $sync_pos_next_to_send == $cksum_pos ) ) ) {
 		    Debug("[debug] we must wait ... cmd_in_window %s ... sync_pos_next_to_send %s ",$cmd_in_window,$sync_pos_next_to_send) ;
 		    if ( defined ( $cksum_pos ) && $sync_pos_next_to_send ) {
