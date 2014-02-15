@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.28 2014/02/15 18:37:21 mas Exp $
+#  $Id: SyncDevice,v 1.29 2014/02/15 19:52:10 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -26,6 +26,8 @@
 #  add SHA-512 
 #  stats - block transfert by network - compression factor 
 #  care , statifier => http://reproducible.io/
+#  add  edonr_384_base64
+#  add skein_1024_base64
 #------------------------------------------------------------------------
 use strict ;
 use Fcntl ;
