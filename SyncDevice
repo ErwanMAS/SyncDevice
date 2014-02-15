@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.26 2014/02/15 18:21:12 mas Exp $
+#  $Id: SyncDevice,v 1.27 2014/02/15 18:34:04 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -432,9 +432,15 @@ if ( $options{'listen'} ) {
 	while ( $sync_pos < $sync_length ) {
 	    #
 	    my $sync_pos_next_to_send=$sync_pos+$cmd_in_window*$options{'blocksize'} ;
-	    if ( $block_checksum{$sync_pos_next_to_send} || ( $sync_pos_next_to_send ==  $sync_length  ) || ( $sel_sock->can_read(0) ) ) {
+	    #
+	    my $must_read=$sel_sock->can_read(0) ;
+	    if ( ! defined($must_read) ) {
+		$must_read=0 ;
+	    }
+	    #
+	    if ( $block_checksum{$sync_pos_next_to_send} || ( $sync_pos_next_to_send ==  $sync_length  ) || $must_read ) {
 		Debug("[debug] sync_pos_next_to_send : %s : sync_length %s : cmd_in_window %s ",$sync_pos_next_to_send,$sync_length,$cmd_in_window) ;
-		if ( $sel_sock->can_read(0) ) {
+		if ( $must_read ) {
 		    my $r=SendCmdAndWait($sock,undef) ;
 		    if ( $r =~ /^\s*B $sync_pos OK\s*$/ ) {
 			lock($sync_pos);
