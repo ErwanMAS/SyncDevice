@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.32 2014/02/17 11:26:01 mas Exp $
+#  $Id: SyncDevice,v 1.33 2014/02/17 12:22:32 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -192,16 +192,12 @@ if ( $options{'listen'} ) {
 	#
 	&Debug("[debug] start loop on sock") ;
 	while ( 1 ) {
-	    my $must_read=$sel_sock->can_read(0) ;
-	    if ( ! defined($must_read) ) {
-		if ( $queue_4_send_packet->pending() > 0 )  {
-		    if ( $sel_sock->can_write(0) ) {
-			my $str_to_write=$queue_4_send_packet->dequeue() ;
-			SendCmd($new_sock,$str_to_write) ;
-			next  ;
-		    } 
-		    next ;
-		}
+	    if ( $queue_4_send_packet->pending() > 0 )  {
+		if ( $sel_sock->can_write(0) ) {
+		    my $str_to_write=$queue_4_send_packet->dequeue() ;
+		    SendCmd($new_sock,$str_to_write) ;
+		    next  ;
+		} 
 	    }
 	    my $l=ReadCmd($new_sock) ;
 	    if ( ! defined($l) ) {
@@ -257,7 +253,7 @@ if ( $options{'listen'} ) {
 		    $queue_4_send_packet->enqueue('KO DEVICE') ;
 		}
 		#-------------------------------------------------------
-	    } elsif ($l=~ /^\s*C\s+(\d+)\s+:([^:]+):([^:]+):\s*/ ) {
+	    } elsif ($l=~ /^\s*C(\d+):([^:]+):(.+)\s*/ ) {
 		#---------------------------
 		my $cur_pos=$1 ;
 		my $cur_md5=$2 ;
@@ -280,7 +276,7 @@ if ( $options{'listen'} ) {
 		if ( ( $block_checksum{$cur_pos}->{'md5'} eq $cur_md5 ) &&
 		     ( $block_checksum{$cur_pos}->{'sha1'} eq $cur_sha1 ) ) {
 		    $count_ok++ ;
-		    $queue_4_send_packet->enqueue("B $cur_pos OK") ;
+		    $queue_4_send_packet->enqueue("B$cur_pos") ;
 		    lock($sync_pos) ;
 		    $sync_pos+=$options{'blocksize'} ;
 		    PurgeBlockCheckSum($sync_pos);
@@ -463,7 +459,7 @@ if ( $options{'listen'} ) {
 		Debug("[debug] sync_pos_next_to_send : %s : sync_length %s : cmd_in_window %s ",$sync_pos_next_to_send,$sync_length,$cmd_in_window) ;
 		if ( $must_read ) {
 		    my $r=SendCmdAndWait($sock,undef) ;
-		    if ( $r =~ /^\s*B $sync_pos OK\s*$/ ) {
+		    if ( $r =~ /^\s*B$sync_pos\s*$/ ) {
 			lock($sync_pos);
 			$sync_pos+=$options{'blocksize'} ;
 		    } elsif ( $r =~ /^\s*NEED DATA $sync_pos\s*$/ ) {
@@ -478,7 +474,7 @@ if ( $options{'listen'} ) {
 		} else {
 		    Debug("[debug] nothing to read") ;
 		    if ( $sync_pos_next_to_send < $sync_length && ( $cmd_in_window < $options{'sync-window'} ) && $block_checksum{$sync_pos_next_to_send} ) {
-			my $r=SendCmd($sock,sprintf("C %s :%s:%s:",$sync_pos_next_to_send,
+			my $r=SendCmd($sock,sprintf("C%s:%s:%s",$sync_pos_next_to_send,
 						    $block_checksum{$sync_pos_next_to_send}->{'md5'},$block_checksum{$sync_pos_next_to_send}->{'sha1'})) ;
 			Debug("[debug] send CKSUM %s : cmd_in_window %s ",$sync_pos_next_to_send,$cmd_in_window) ;
 			$cmd_in_window++ ;
