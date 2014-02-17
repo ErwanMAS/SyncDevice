@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.30 2014/02/16 00:01:18 mas Exp $
+#  $Id: SyncDevice,v 1.31 2014/02/17 09:22:12 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -121,6 +121,7 @@ my $sync_curtime ;
 my $sync_endtime ;
 #
 my $queue_4_writing_block=Thread::Queue->new;
+my $queue_4_send_packet=Thread::Queue->new;
 #
 my $thr_cksum ;
 my $thr_write ;
@@ -184,8 +185,21 @@ if ( $options{'listen'} ) {
 	#----------------------------------------------------------------
 	binmode $new_sock ;
 	select($new_sock) ; $|=1 ; select(STDOUT) ;
+	my $sel_sock = IO::Select->new( $new_sock );
+	#
 	&Debug("[debug] start loop on sock") ;
 	while ( 1 ) {
+	    my $must_read=$sel_sock->can_read(0) ;
+	    if ( ! defined($must_read) ) {
+		if ( $queue_4_send_packet->pending() > 0 )  {
+		    if ( $sel_sock->can_write(0) ) {
+			my $str_to_write=$queue_4_send_packet->dequeue() ;
+			SendCmd($new_sock,$str_to_write) ;
+			next  ;
+		    } 
+		    next ;
+		}
+	    }
 	    my $l=ReadCmd($new_sock) ;
 	    if ( ! defined($l) ) {
 		last ;
@@ -196,9 +210,9 @@ if ( $options{'listen'} ) {
 		$options{'blocksize'}=$3 ;
 		$options{'mode'}=lc($4) ;
 		#
-		if ( defined($9) && defined($10) ) {
-		    $device_local=$9 ;
-		    $device_local_offset=$10 ;
+		if ( defined($10) && defined($11) ) {
+		    $device_local=$10 ;
+		    $device_local_offset=$11 ;
 		    if ( ! -b $device_local || $device_local_offset !~  /^[0-9]+$/ ) {
 			$device_local=undef ;
 			$device_local_offset=undef ;
@@ -218,7 +232,7 @@ if ( $options{'listen'} ) {
 		    if ( ( $sync_length + $device_local_offset ) <= $sd ) {
 			#-------------------------------------------------
 			&Debug("[debug] ok with request '%s' => '%s'\@%d \n", $device_distant ,$device_local,$device_local_offset) ;
-			SendCmd($new_sock,'OK DEVICE') ;
+			$queue_4_send_packet->enqueue('OK DEVICE') ;
 			$sync_pos=0 ;
 			$count_ok=0;
 			$count_ko=0;
@@ -233,14 +247,14 @@ if ( $options{'listen'} ) {
 			#-------------------------------------------------
 		    } else {
 			&Debug("[debug] pb with request ( %d + %d > %d )\n", $sync_length , $device_local_offset , $sd ) ;
-			SendCmd($new_sock,'KO DEVICE') ;
+			$queue_4_send_packet->enqueue('KO DEVICE') ;
 		    }
 		} else {
 		    &Debug("[debug] pb with '%s' & '%s' \n",$device_local,$device_local_offset) ;
-		    SendCmd($new_sock,'KO DEVICE') ;
+		    $queue_4_send_packet->enqueue('KO DEVICE') ;
 		}
 		#-------------------------------------------------------
-	    } elsif ($l=~ /^\s*C\s+(\d+)\s+:([^:]+):([^:+]+)\s*/ ) {
+	    } elsif ($l=~ /^\s*C\s+(\d+)\s+:([^:]+):([^:]+):\s*/ ) {
 		#---------------------------
 		my $cur_pos=$1 ;
 		my $cur_md5=$2 ;
@@ -263,12 +277,12 @@ if ( $options{'listen'} ) {
 		if ( ( $block_checksum{$cur_pos}->{'md5'} eq $cur_md5 ) &&
 		     ( $block_checksum{$cur_pos}->{'sha1'} eq $cur_sha1 ) ) {
 		    $count_ok++ ;
-		    SendCmd($new_sock,"B $cur_pos OK") ;
+		    $queue_4_send_packet->enqueue("B $cur_pos OK") ;
 		    lock($sync_pos) ;
 		    $sync_pos+=$options{'blocksize'} ;
 		    PurgeBlockCheckSum($sync_pos);
 		} else {
-		    SendCmd($new_sock,"NEED DATA $cur_pos") ;		    
+		    $queue_4_send_packet->enqueue("NEED DATA $cur_pos") ;		    
 		    $count_ko++ ;
 		    push @{$list_ko} , $cur_pos ;
 		}
@@ -383,9 +397,9 @@ if ( $options{'listen'} ) {
 	    #------------------------------------------------------------
 	    if ( $sync_curtime < time()  ) {
 		$sync_curtime=time()+$options{'stats-interval'} ;
-		Debug("Stats Sync : s_pos %s s_length %s b_ok %s b_ko %s b_wrt %s timing %s remaining time %s | net %d bytes for %d bytes \n",
-		      $sync_pos,$sync_length,$count_ok,$count_ko,$network_block_receive,(time()-$sync_starttime),
-		      int(((time()-$sync_starttime)/ ($sync_pos+1))*$sync_length)-(time()-$sync_starttime) ,
+		Debug("Stats Sync : s_pos %s s_length %s b_ok %s b_ko %s b_wrt %s ack %s | time %s remaining %s | net %d bytes for %d bytes\n",
+		      $sync_pos,$sync_length,$count_ok,$count_ko,$network_block_receive,$queue_4_send_packet->pending(),
+		      (time()-$sync_starttime),int(((time()-$sync_starttime)/ ($sync_pos+1))*$sync_length)-(time()-$sync_starttime) ,
 		      $network_bytes_receive , $count_ko*$options{'blocksize'} ) ;
 	    }
 	    #------------------------------------------------------------
@@ -507,6 +521,7 @@ if ( $options{'listen'} ) {
 sub BlockWriter {
     my ($dev,$dev_off,$dat_len)=@_ ;
     my $last_write=0 ;
+    Debug('starting BlockWriter thread on %s starting at %s during %s bytes',$dev,$dev_off,$dat_len);
     while ( $last_write < $dev_off+$dat_len-$options{'blocksize'} ) {
 	my $what=$queue_4_writing_block->dequeue() ;
 	if ( $what eq 'WRT' ) {
@@ -627,6 +642,10 @@ sub ComputeChecksum {
 	    while ( ( $cksum_pos > $sync_pos + ($factor*$options{'blocksize'})/3 ) && ( $do_wait-- ) ) {
 		sleep(2);
 	    }
+	} elsif ( $queue_4_writing_block->pending()  > 40 ) {
+	    Debug('[notice] ComputeChecksum too agressive / Writer pending %s / Waiting %s vs %s (%s) ',$queue_4_writing_block->pending(),
+		                                                                                        $cksum_pos,$sync_pos,scalar(keys %block_checksum)) ;
+	    sleep(($queue_4_writing_block->pending()/20)) ;
 	} else {
 	    my $buf ;
 	    if ( ! sysseek(DEVCKSUM,$device_offset+$cksum_pos,0) ) {
@@ -648,6 +667,8 @@ sub ComputeChecksum {
 			$h{'md5'}=skein_1024_base64($buf) ;
 			$h{'sha1'}=sha512_base64($buf) ;
 		    }
+		    $h{'md5'}=~s/\n//gs;
+		    $h{'sha1'}=~s/\n//gs;
 		    lock(%block_checksum) ;
 		    $block_checksum{$cksum_pos}=\%h ;
 		    $cksum_pos=$cksum_pos+$options{'blocksize'} ;
