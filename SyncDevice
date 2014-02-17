@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.31 2014/02/17 09:22:12 mas Exp $
+#  $Id: SyncDevice,v 1.32 2014/02/17 11:26:01 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -186,6 +186,9 @@ if ( $options{'listen'} ) {
 	binmode $new_sock ;
 	select($new_sock) ; $|=1 ; select(STDOUT) ;
 	my $sel_sock = IO::Select->new( $new_sock );
+	#
+	$new_sock->sockopt(SO_RCVBUF, 2048*1024);
+	$new_sock->sockopt(SO_SNDBUF, 2048*1024);
 	#
 	&Debug("[debug] start loop on sock") ;
 	while ( 1 ) {
