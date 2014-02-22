@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.33 2014/02/17 12:22:32 mas Exp $
+#  $Id: SyncDevice,v 1.34 2014/02/22 11:18:29 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -187,11 +187,12 @@ if ( $options{'listen'} ) {
 	select($new_sock) ; $|=1 ; select(STDOUT) ;
 	my $sel_sock = IO::Select->new( $new_sock );
 	#
-	$new_sock->sockopt(SO_RCVBUF, 2048*1024);
-	$new_sock->sockopt(SO_SNDBUF, 2048*1024);
+	$new_sock->sockopt(SO_RCVBUF, 32*1048*1024);
+	$new_sock->sockopt(SO_SNDBUF, 32*1048*1024);
 	#
 	&Debug("[debug] start loop on sock") ;
 	while ( 1 ) {
+	    #------------------------------------------------------------
 	    if ( $queue_4_send_packet->pending() > 0 )  {
 		if ( $sel_sock->can_write(0) ) {
 		    my $str_to_write=$queue_4_send_packet->dequeue() ;
@@ -199,6 +200,26 @@ if ( $options{'listen'} ) {
 		    next  ;
 		} 
 	    }
+	    #------------------------------------------------------------	
+	    if ( defined($device_local ) && $sync_pos >= $sync_length && $queue_4_send_packet->pending() == 0 ) {
+		$sync_endtime=time() ;
+		$queue_4_writing_block->enqueue('EOF') ;
+		Debug("[debug] enqueue(EOF) .... DONE ") ;
+		$thr_cksum->join() ;
+		Debug("[debug] join cksum .... DONE ") ;
+		$thr_write->join() ;
+		Debug("[debug] join write .... DONE ") ;
+		Debug("OK sync done : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s \n",
+		      $sync_pos,$sync_length,$count_ok,$count_ko,($sync_endtime-$sync_starttime) ) ;
+		if ( $options{'display-ko'} && scalar(@{$list_ko}) ) {
+		    my $str=join(',',@{$list_ko}) ;
+		    $str=~ s/(.{70,90},)/$1\n/g ;
+		    Debug("Display Ko:\n".$str) ;
+		}
+		close($new_sock);
+		last ;
+	    }
+	    #------------------------------------------------------------	
 	    my $l=ReadCmd($new_sock) ;
 	    if ( ! defined($l) ) {
 		last ;
@@ -374,25 +395,6 @@ if ( $options{'listen'} ) {
 		print join(' ',split(//,$l)),"\n" ; 
 		#-------------------------------------------------------
 	    }
-	    #------------------------------------------------------------	
-	    if ( $sync_pos >= $sync_length ) {
-		$sync_endtime=time() ;
-		$queue_4_writing_block->enqueue('EOF') ;
-		Debug("[debug] enqueue(EOF) .... DONE ") ;
-		$thr_cksum->join() ;
-		Debug("[debug] join cksum .... DONE ") ;
-		$thr_write->join() ;
-		Debug("[debug] join write .... DONE ") ;
-		Debug("OK sync done : sync_pos %s sync_length %s block_ok %s block_ko %s timing %s \n",
-		      $sync_pos,$sync_length,$count_ok,$count_ko,($sync_endtime-$sync_starttime) ) ;
-		if ( $options{'display-ko'} && scalar(@{$list_ko}) ) {
-		    my $str=join(',',@{$list_ko}) ;
-		    $str=~ s/(.{70,90},)/$1\n/g ;
-		    Debug("Display Ko:\n".$str) ;
-		}
-		close($new_sock);
-		last ;
-	    }
 	    #------------------------------------------------------------
 	    if ( $sync_curtime < time()  ) {
 		$sync_curtime=time()+$options{'stats-interval'} ;
@@ -426,6 +428,8 @@ if ( $options{'listen'} ) {
     }
     binmode $sock ;
     select($sock) ; $|=1 ; select(STDOUT) ;
+    $sock->sockopt(SO_RCVBUF, 32*1048*1024);
+    $sock->sockopt(SO_SNDBUF, 32*1048*1024);
     #--------------------------------------------------------------------
     my $sel_sock = IO::Select->new( $sock );
     my $cmd_in_window=0 ;
@@ -459,6 +463,11 @@ if ( $options{'listen'} ) {
 		Debug("[debug] sync_pos_next_to_send : %s : sync_length %s : cmd_in_window %s ",$sync_pos_next_to_send,$sync_length,$cmd_in_window) ;
 		if ( $must_read ) {
 		    my $r=SendCmdAndWait($sock,undef) ;
+		    if ( ! defined($r) ) {
+			Debug('read is empty !') ;
+			Debug("sync_pos :%s sync_pos_next_to_send : %s : sync_length %s : cmd_in_window %s ",$sync_pos,$sync_pos_next_to_send,$sync_length,$cmd_in_window) ;
+			last ;
+		    }
 		    if ( $r =~ /^\s*B$sync_pos\s*$/ ) {
 			lock($sync_pos);
 			$sync_pos+=$options{'blocksize'} ;
