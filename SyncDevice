@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.34 2014/02/22 11:18:29 mas Exp $
+#  $Id: SyncDevice,v 1.35 2014/02/26 11:44:12 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -23,11 +23,8 @@
 #  add a option for the port 
 # Todo:
 #  Switch to C
-#  add SHA-512 
 #  stats - block transfert by network - compression factor 
 #  care , statifier => http://reproducible.io/
-#  add  edonr_384_base64
-#  add skein_1024_base64
 #------------------------------------------------------------------------
 use strict ;
 use Fcntl ;
@@ -36,11 +33,12 @@ use threads::shared;
 use Thread::Queue ;
 use IO::Select;
 use IO::Socket; 
-use Digest::SHA   qw(sha1_base64 sha512_base64) ;
-use Digest::MD5   qw(md5_base64) ;
-use Digest::MD4   qw(md4_base64) ;
-use Digest::EdonR qw(edonr_512_base64 edonr_384_base64 ) ;
-use Digest::Skein qw(skein_1024_base64) ;
+use MIME::Base64 qw( encode_base64url decode_base64url ) ;
+use Digest::SHA   qw(sha1 sha512) ;
+use Digest::MD5   qw(md5) ;
+use Digest::MD4   qw(md4) ;
+use Digest::EdonR qw(edonr_512 edonr_384 ) ;
+use Digest::Skein qw(skein_1024) ;
 use Time::HiRes qw(usleep) ;
 use File::Basename ;
 use English;
@@ -666,17 +664,15 @@ sub ComputeChecksum {
 		    my %h : shared  ;
 		    $h{'pos'}=$cksum_pos ;
 		    if ( $options{'mode'} eq 'ultra' ) {
-			$h{'md5'}=substr(edonr_512_base64($buf),0,11) ;
+			$h{'md5'}=substr(encode_base64url(edonr_512($buf)),0,11) ;
 			$h{'sha1'}='X' ;
 		    } elsif ( $options{'mode'} eq 'fast' ) {
-			$h{'md5'}=md4_base64($buf) ;
-			$h{'sha1'}=edonr_384_base64($buf) ;
+			$h{'md5'}=encode_base64url(md4($buf)) ;
+			$h{'sha1'}=encode_base64url(edonr_384($buf)) ;
 		    } else {
-			$h{'md5'}=skein_1024_base64($buf) ;
-			$h{'sha1'}=sha512_base64($buf) ;
+			$h{'md5'}=encode_base64url(skein_1024($buf)) ;
+			$h{'sha1'}=encode_base64url(sha512($buf)) ;
 		    }
-		    $h{'md5'}=~s/\n//gs;
-		    $h{'sha1'}=~s/\n//gs;
 		    lock(%block_checksum) ;
 		    $block_checksum{$cksum_pos}=\%h ;
 		    $cksum_pos=$cksum_pos+$options{'blocksize'} ;
