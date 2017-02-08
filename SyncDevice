@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.35 2014/02/26 11:44:12 mas Exp $
+#  $Id: SyncDevice,v 1.36 2017/02/08 17:32:34 mas Exp $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -33,7 +33,7 @@ use threads::shared;
 use Thread::Queue ;
 use IO::Select;
 use IO::Socket; 
-use MIME::Base64 qw( encode_base64url decode_base64url ) ;
+use MIME::Base64 qw( encode_base64 ) ;
 use Digest::SHA   qw(sha1 sha512) ;
 use Digest::MD5   qw(md5) ;
 use Digest::MD4   qw(md4) ;
@@ -57,6 +57,7 @@ my $debug=0 ;
 #
 my %options ;
 GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","mode=s","auto-accept","destination-device=s","destination-offset=i","filter-remote=s",
+	              "server-mode-sender","client-mode-receiver",
 	              "offset=i","blocksize=i","toleratefile","compress=s","truncate","bufferfactor=i","stats-interval=i","sync-window=i","display-ko");
 #
 if ( defined($options{'verbose'} ) ) {
@@ -664,14 +665,14 @@ sub ComputeChecksum {
 		    my %h : shared  ;
 		    $h{'pos'}=$cksum_pos ;
 		    if ( $options{'mode'} eq 'ultra' ) {
-			$h{'md5'}=substr(encode_base64url(edonr_512($buf)),0,11) ;
+			$h{'md5'}=substr(encode_base64(edonr_512($buf),undef),0,11) ;
 			$h{'sha1'}='X' ;
 		    } elsif ( $options{'mode'} eq 'fast' ) {
-			$h{'md5'}=encode_base64url(md4($buf)) ;
-			$h{'sha1'}=encode_base64url(edonr_384($buf)) ;
+			$h{'md5'}=encode_base64(md4($buf),undef) ;
+			$h{'sha1'}=encode_base64(edonr_384($buf),undef) ;
 		    } else {
-			$h{'md5'}=encode_base64url(skein_1024($buf)) ;
-			$h{'sha1'}=encode_base64url(sha512($buf)) ;
+			$h{'md5'}=encode_base64(skein_1024($buf),undef) ;
+			$h{'sha1'}=encode_base64(sha512($buf),undef) ;
 		    }
 		    lock(%block_checksum) ;
 		    $block_checksum{$cksum_pos}=\%h ;
