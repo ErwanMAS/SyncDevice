@@ -520,7 +520,7 @@ parser = argparse.ArgumentParser(description="SyncDevice ( transfert a a device 
 parser.add_argument('--mode'         ,choices=['daemon', 'client']   ,help="daemon/client , listening or not",default='client')
 parser.add_argument('--action'       ,choices=['sender', 'receiver'] ,help="sender/receiver",default='receiver')
 parser.add_argument('--hashmode'     ,choices=['secure','standart', 'fast','ultra'] ,help="checksum quality",default='standart')
-parser.add_argument('--blocksize'    ,metavar='BLOCSIZE',type=int,help="size of block for transfert",default=1024*1024)
+parser.add_argument('--blocksize'    ,metavar='BLOCKSIZE',type=int,help="size of block for transfert",default=1024*1024)
 parser.add_argument('--device'       ,metavar='DISK',help="on which device",required=True)
 parser.add_argument('--addr'         ,help="daemon addr")
 parser.add_argument('--benchmark'    ,choices=['md5','adl','sha1','sha512','md4','skein_1024','skein_512','skein_256'],help="benchmark of hash")
