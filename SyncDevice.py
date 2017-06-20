@@ -49,6 +49,8 @@ def StartClient(arg):
     server_address = arg.addr.split(':')
     if len(server_address) == 1:
         server_address.append(7070)
+    else:
+        server_address[1]=int(server_address[1])
     server_address=tuple(server_address)
     print('connecting to %s port %s' % server_address, file=sys.stderr)
     sock.connect(server_address)
@@ -99,22 +101,32 @@ def StartExchangeSender(netsock,arg):
             if cmdmatch:
                 sync_pos=int(cmdmatch.group(1))
                 cnt_block_in_transit=cnt_block_in_transit-1
-                print('receive ok chksum  @ %12d ' % sync_pos , file=sys.stderr)
+#                print('receive ok chksum  @ %12d ' % sync_pos , file=sys.stderr)
                 continue
             cmdmatch = re.search('^NEED DATA (\d+)$',res)
             if cmdmatch:
                 sync_pos=int(cmdmatch.group(1))
                 cnt_block_in_transit=cnt_block_in_transit-1
                 print('receive ok needdata @ %12d ' % sync_pos , file=sys.stderr)
-                dta=BlockRead(arg.device,sync_pos,arg.blocksize)
-                if SendCmd(netsock,"BLOCK DATA %d" % sync_pos) :
-                    if netsock.sendall(dta) != None :
-                        print('can not send payload data for %d ' % sync_pos , file=sys.stderr)
+                dta=BlockRead(arg.device,sync_pos,arg.blocksize,arg.compress)
+                if arg.compress :
+                    if SendCmd(netsock,"BLOCK DATA COMPRESS %d %d " % (sync_pos,len(dta) ) ) :
+                        if netsock.sendall(dta) != None :
+                            print('can not send payload data for %d ' % sync_pos , file=sys.stderr)
+                            break
+                    else:
+                        print('can not send cmd block data for %d ' % sync_pos , file=sys.stderr)
                         break
+                    continue
                 else:
-                    print('can not send cmd block data for %d ' % sync_pos , file=sys.stderr)
-                    break
-                continue
+                    if SendCmd(netsock,"BLOCK DATA %d" % sync_pos) :
+                        if netsock.sendall(dta) != None :
+                            print('can not send payload data for %d ' % sync_pos , file=sys.stderr)
+                            break
+                    else:
+                        print('can not send cmd block data for %d ' % sync_pos , file=sys.stderr)
+                        break
+                    continue
             print('receive a unknow data "%s" \n' %  res , file=sys.stderr)
             break
         else:
@@ -398,13 +410,16 @@ def ManageCounters ( stop , arg , queue4counters ):
             DisplayCounters(counters,elapsedtime)
             lastts=curts
 # --------------------------------------------------------------------------------------------------------
-def BlockRead ( dev , syncpos , bs ):
+def BlockRead ( dev , syncpos , bs , must_compress):
     f = open(dev, 'rb')
     f.seek(syncpos)
     dta=f.read(bs)
     if len(dta) == 0 :
         return
-    return dta
+    if must_compress :
+        return zlib.compress(dta,8)
+    else:
+        return dta
 # --------------------------------------------------------------------------------------------------------
 def BlockWriter ( stop , dev , syncsize , bs , queue2read ,queue4counters ):
     f = open(dev, 'rb+')
@@ -523,6 +538,7 @@ parser.add_argument('--hashmode'     ,choices=['secure','standart', 'fast','ultr
 parser.add_argument('--blocksize'    ,metavar='BLOCKSIZE',type=int,help="size of block for transfert",default=1024*1024)
 parser.add_argument('--device'       ,metavar='DISK',help="on which device",required=True)
 parser.add_argument('--addr'         ,help="daemon addr")
+parser.add_argument('--compress'     , type=bool , default=False ,help="Activate Compression")
 parser.add_argument('--benchmark'    ,choices=['md5','adl','sha1','sha512','md4','skein_1024','skein_512','skein_256'],help="benchmark of hash")
 args = parser.parse_args()
 # --------------------------------------------------------------------------------------------------------
