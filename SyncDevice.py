@@ -29,7 +29,15 @@ def StartDaemon(arg):
     sock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR, 1)
     sock.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF, 2*1014*1024)
     sock.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF, 2*1014*1024)
-    server_address = ('0.0.0.0', 7070)
+    if not arg.addr :
+        server_address = ('0.0.0.0', 7070)
+    else:
+        server_address = arg.addr.split(':')
+        if len(server_address) == 1 :
+            server_address.append(7070)
+        else:
+            server_address[1]=int(server_address[1])
+        server_address=tuple(server_address)
     print('starting up on %s port %s' % server_address, file=sys.stderr)
     sock.bind(server_address)
     sock.listen(1)
@@ -417,7 +425,7 @@ def BlockRead ( dev , syncpos , bs , must_compress):
     if len(dta) == 0 :
         return
     if must_compress :
-        return zlib.compress(dta,8)
+        return zlib.compress(dta,9)
     else:
         return dta
 # --------------------------------------------------------------------------------------------------------
