@@ -115,7 +115,7 @@ def StartExchangeSender(netsock,arg):
             if cmdmatch:
                 sync_pos=int(cmdmatch.group(1))
                 cnt_block_in_transit=cnt_block_in_transit-1
-                print('receive ok needdata @ %12d ' % sync_pos , file=sys.stderr)
+#                print('receive ok needdata @ %12d ' % sync_pos , file=sys.stderr)
                 dta=BlockRead(arg.device,sync_pos,arg.blocksize,arg.compress)
                 if arg.compress :
                     if SendCmd(netsock,"BLOCK DATA COMPRESS %d %d " % (sync_pos,len(dta) ) ) :
@@ -189,7 +189,7 @@ def StartExchangeReceiver(netsock,arg):
 #                print >>sys.stderr,'send %s\n' % ( item[2] )
                 continue
         #
-        readable, writable, exceptional = select.select([netsock],[],[],1)
+        readable, writable, exceptional = select.select([netsock],[],[],0.05)
         #
         if ( not readable ) :
             if ( last_pos_for_chksum == syncsize-arg.blocksize or last_pos_for_askdat == syncsize-arg.blocksize ) :
@@ -259,8 +259,7 @@ def StartExchangeReceiver(netsock,arg):
             datalen=int(cmdmatch.group(2))
             dataraw=ReadDataOnSocket(netsock,datalen)
             if dataraw and len(dataraw) == datalen :
-                dataorig=zlib.decompress(dataraw)
-                queue_4_block_writer.put(['WRT',datapos,dataorig])
+                queue_4_block_writer.put(['WRTZ',datapos,dataraw])
                 last_pos_for_rcvdat=datapos
                 continue
             else:
@@ -437,11 +436,15 @@ def BlockWriter ( stop , dev , syncsize , bs , queue2read ,queue4counters ):
     tv=0
     while  ( last_write < syncsize -bs ) :
         item=queue2read.get()
-        if item[0] == 'WRT':
+        if item[0] == 'WRT' or item[0] == 'WRTZ' :
 #            print >>sys.stderr,'write some data at %s ( %s) \n' % (item[1],len(item[2]))
             t1=time.time()
             f.seek(item[1])
-            f.write(item[2])
+            if item[0] == 'WRTZ' :
+                dataorig=zlib.decompress(item[2])
+                f.write(dataorig)
+            else:
+                f.write(item[2])
             last_write=item[1]
             cntrcvko=cntrcvko+1
             #
