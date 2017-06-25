@@ -3,7 +3,7 @@
 # (c) erwan@mas.nom.fr 2007-2010
 #
 #  SyncDevice 
-#  $Id: SyncDevice,v 1.36 2017/02/08 17:32:34 mas Exp $
+#  $Id: SyncDevice,v 1.35 2014/02/26 11:44:12 mas Exp mas $
 #
 #  Synchronize device(s) via network , with minimun bandwith .
 #  The programm calculate checksum of piece of device , and 
@@ -36,9 +36,10 @@ use IO::Socket;
 use MIME::Base64 qw( encode_base64 ) ;
 use Digest::SHA   qw(sha1 sha512) ;
 use Digest::MD5   qw(md5) ;
-use Digest::MD4   qw(md4) ;
-use Digest::EdonR qw(edonr_512 edonr_384 ) ;
-use Digest::Skein qw(skein_1024) ;
+use Digest::Alder32 ;
+# use Digest::MD4   qw(md4) ;
+# use Digest::EdonR qw(edonr_512 edonr_384 ) ;
+# use Digest::Skein qw(skein_1024) ;
 use Time::HiRes qw(usleep) ;
 use File::Basename ;
 use English;
@@ -57,7 +58,6 @@ my $debug=0 ;
 #
 my %options ;
 GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","mode=s","auto-accept","destination-device=s","destination-offset=i","filter-remote=s",
-	              "server-mode-sender","client-mode-receiver",
 	              "offset=i","blocksize=i","toleratefile","compress=s","truncate","bufferfactor=i","stats-interval=i","sync-window=i","display-ko");
 #
 if ( defined($options{'verbose'} ) ) {
@@ -89,8 +89,8 @@ if ( ! $options{'mode'} ) {
     $options{'mode'}="secure" ;
 } else {
     if ( ! $options{'listen'} ) {
-	if ( ! ( ( $options{'mode'} eq 'secure' ) || ( $options{'mode'} eq 'fast' ) || ( $options{'mode'} eq 'ultra' ) ) ) {
-	    die(sprintf("mode is not secure and not fast and not ultra .\n",$options{'mode'})) ;
+	if ( ! ( ( $options{'mode'} eq 'secure' ) || ( $options{'mode'} eq 'fast' ) || ( $options{'mode'} eq 'ultra' ) || ( $options{'mode'} eq 'standart' ) ) ) {
+	    die(sprintf("mode is not secure and not fast and not ultra and not standart .\n",$options{'mode'})) ;
 	}
     } else {
 	die("option mode is not available in daemon mode.\n") ;
@@ -441,7 +441,8 @@ if ( $options{'listen'} ) {
     } else {
 	$cmd=sprintf("DEVICE %s %s %s %s",$options{'device'},$sync_length,$options{'blocksize'},uc($options{'mode'})) ;
     }
-    if ( SendCmdAndWait($sock,$cmd) =~/^\s*OK DEVICE\s*$/ ) {
+    my $res=SendCmdAndWait($sock,$cmd) ;
+    if ( $res && $res =~/^\s*OK DEVICE\s*$/ ) {
 	Debug("OK SendCmdAndWait DEVICE\n") ;
 	#
 	$sync_pos=0 ;
@@ -553,7 +554,11 @@ sub WriteBlockData {
     my $p=$_[1] ;
     my $b=$_[2] ;
     #----------------------
-    if ( ! sysopen(DEVTOWRITE,$d, O_LARGEFILE | O_RDWR | O_SYNC ) ) {
+    my $flags=O_RDWR | O_SYNC ;
+    eval {
+	$flags=O_LARGEFILE | O_RDWR | O_SYNC  ;
+    } ;
+    if ( ! sysopen(DEVTOWRITE,$d, $flags ) ) {
         Debug("PB open device '%s'\n",$d) ;
         exit 1 ;
     }
@@ -632,7 +637,11 @@ sub ComputeChecksum {
     my ($device_to_read,$device_offset,$sync_size)=($_[0],$_[1],$_[2]) ;
     Debug('starting cksum thread on %s starting at %s during %s bytes',$device_to_read,$device_offset,$sync_size) ;
     #--------------------------------------------------------------------
-    if ( ! sysopen(DEVCKSUM,$device_to_read, O_LARGEFILE | O_RDONLY )  ) {
+    my $flags=O_RDONLY ;
+    eval {
+	$flags=O_LARGEFILE | O_RDONLY ;
+    } ;
+    if ( ! sysopen(DEVCKSUM,$device_to_read, $flags )  ) {
 	Debug("PB open device '%s'\n",$device_to_read) ;
 	exit 1 ;
     }
@@ -670,6 +679,9 @@ sub ComputeChecksum {
 		    } elsif ( $options{'mode'} eq 'fast' ) {
 			$h{'md5'}=encode_base64(md4($buf),undef) ;
 			$h{'sha1'}=encode_base64(edonr_384($buf),undef) ;
+		    } elsif ( $options{'mode'} eq 'standart' ) {
+			$h{'md5'}=encode_base64(md5($buf),undef) ;
+			$h{'sha1'}=encode_base64(sha1($buf),undef) ;
 		    } else {
 			$h{'md5'}=encode_base64(skein_1024($buf),undef) ;
 			$h{'sha1'}=encode_base64(sha512($buf),undef) ;
