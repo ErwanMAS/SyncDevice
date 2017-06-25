@@ -412,7 +412,7 @@ def ManageCounters ( stop , arg , queue4counters ):
                 C=[C]
             for OC in C:
                 counters[OC[0]]=OC[1]
-        if ( 'syncsize' in counters and 'blocksize' in counters and 'lastwritepos' in counters and 'last_cur_pos_ok' in counters ) and ( curts - lastts ) > 4 :
+        if ( 'syncsize' in counters and 'blocksize' in counters and 'lastwritepos' in counters and 'last_cur_pos_ok' in counters ) and ( curts - lastts ) > 16 :
             elapsedtime=curts-firstts
             DisplayCounters(counters,elapsedtime)
             lastts=curts
@@ -443,12 +443,13 @@ def BlockWriter ( stop , dev , syncsize , bs , queue2read ,queue4counters ):
             if item[0] == 'WRTZ' :
                 dataorig=zlib.decompress(item[2])
                 f.write(dataorig)
+                v=len(dataorig)
             else:
                 f.write(item[2])
+                v=len(item[2])
             last_write=item[1]
             cntrcvko=cntrcvko+1
             #
-            v=len(item[2])
             tv=tv+v
             t2=time.time()
             tt=tt+t2-t1
