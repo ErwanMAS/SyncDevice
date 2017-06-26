@@ -453,10 +453,10 @@ def BlockWriter ( stop , dev , syncsize , bs , queue2read ,queue4counters ):
             tv=tv+v
             t2=time.time()
             tt=tt+t2-t1
-            mustsleep=tv*1.0/(1024*1024)-tt
+            mustsleep=(tv*1.0/(1024.0*1024*1024))-tt
             #
             if mustsleep > 0.5 :
-#                print('%f secs.  %d trfs => %f'% (tt,tv,mustsleep),file=sys.stderr)
+                print('%f secs.  %d trfs => %f'% (tt,tv,mustsleep),file=sys.stderr)
                 tt=tt+mustsleep
                 time.sleep(mustsleep)
             queue4counters.put([['cntrcvko',cntrcvko],['lastwritepos',last_write]])
