@@ -298,7 +298,7 @@ def StartExchangeReceiver(netsock,arg):
         t_infos[0][0].join()
     #
     print('end of sync\n', file=sys.stderr)
-    exit()
+    sys.exit()
 
 
 # --------------------------------------------------------------------------------------------------------
@@ -556,7 +556,7 @@ args = parser.parse_args()
 # --------------------------------------------------------------------------------------------------------
 if args.benchmark :
     benchmark_hash(args)
-    exit()
+    sys.exit()
 if args.mode == 'daemon' :
     StartDaemon(args)
 if args.mode == 'client' :
