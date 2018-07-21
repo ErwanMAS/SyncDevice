@@ -1,4 +1,4 @@
-#!/usr/bin/env perl -W
+#!/usr/bin/perl -W
 #------------------------------------------------------------------------
 # (c) erwan@mas.nom.fr 2007-2017
 #
@@ -37,7 +37,7 @@ use Digest::SHA   qw(sha1 sha512) ;
 use Digest::MD5   qw(md5) ;
 use Digest::MD4   qw(md4) ;
 use Digest::EdonR qw(edonr_512 edonr_384 ) ;
-use Digest::Skein qw(skein_256  skein_512 skein_1024) ;
+use Digest::Skein 0.10 qw(skein_256  skein_512 skein_1024) ;
 use Time::HiRes qw(usleep) ;
 use File::Basename ;
 use English;
@@ -56,13 +56,13 @@ my $debug=0 ;
 #
 my %options ;
 GetOptions (\%options,"verbose:s","listen=s","device=s","destination-server=s","mode=s","auto-accept","destination-device=s","destination-offset=i","filter-remote=s",
-	              "server-mode-sender","client-mode-receiver",
+	              "server-mode-sender","client-mode-receiver","no-write",
 	              "benchmark=s",
 	              "offset=i","blocksize=i","toleratefile","compress=s","truncate","bufferfactor=i","stats-interval=i","sync-window=i","display-ko");
 #
 if ( defined($options{'verbose'} ) ) {
-    if ( $debug_level_2_print{$options{'verbose'}} ) {
-	$debug=$debug_level_2_print{$options{'verbose'}} ;
+    if ( $debug_level_2_print{lc($options{'verbose'})} ) {
+	$debug=$debug_level_2_print{lc($options{'verbose'})} ;
     } else {
 	$debug=4 ;
     }
@@ -308,6 +308,14 @@ if ( $options{'listen'} ) {
 		    $sync_pos+=$options{'blocksize'} ;
 		    PurgeBlockCheckSum($sync_pos);
 		} else {
+		    if ( ! ( $block_checksum{$cur_pos}->{'md5'} eq $cur_md5 ) ) {
+			Debug("[debug] local md5  : '%s'\n",$block_checksum{$cur_pos}->{'md5'}) ;
+			Debug("[debug] remot md5  : '%s'\n",$cur_md5) ;
+		    }
+		    if ( ! ( $block_checksum{$cur_pos}->{'sha1'} eq $cur_sha1 ) ) {
+			Debug("[debug] local sha1 : '%s'\n",$block_checksum{$cur_pos}->{'sha1'}) ;
+			Debug("[debug] remot sha1 : '%s'\n",$cur_sha1) ;
+		    }
 		    $queue_4_send_packet->enqueue("NEED DATA $cur_pos") ;		    
 		    $count_ko++ ;
 		    push @{$list_ko} , $cur_pos ;
@@ -599,7 +607,9 @@ sub BlockWriter {
 	if ( $what eq 'WRT' ) {
 	    my $pos=$queue_4_writing_block->dequeue() ;
 	    my $dat=$queue_4_writing_block->dequeue() ;
-	    &WriteBlockData($dev,$pos,$dat) ;
+	    if ( ! defined($options{'no-write'}) ) {
+		&WriteBlockData($dev,$pos,$dat) ;
+	    }
 	    $last_write=$pos ;
 	    $pos=undef ;
 	    $dat=undef ;
@@ -742,7 +752,7 @@ sub ComputeChecksum {
 			$h{'sha1'}='X' ;
 		    } elsif ( $options{'mode'} eq 'fast' ) {
 			$h{'md5'}=encode_base64(pack("L",adler32($buf)),'') ;
-			$h{'sha1'}=encode_base64(md4($buf)) ;
+			$h{'sha1'}=encode_base64(md4($buf),'') ;
 		    } elsif ( $options{'mode'} eq 'standart' ) {
 			$h{'md5'}=encode_base64(md5($buf),'') ;
 			$h{'sha1'}=encode_base64(sha1($buf),'') ;
