@@ -599,16 +599,22 @@ if args.mode == 'client' :
 # 
 # 
 # --------------------------------------------------------------------------------------------------------
-# sudo apt-get install python3-pip python3-venv
+# sudo apt-get install python3-pip python3-venv patchelf
 #
 # TMPDIR=$(mktemp  -d)
 # python3 -m venv $TMPDIR/pyinstaller
+#
 # PP=$TMPDIR/pyinstaller/bin/pip3
 # PY=$TMPDIR/pyinstaller/bin/python3
 # PR=$TMPDIR/pyinstaller/bin/pyinstaller
+# ST=$TMPDIR/pyinstaller/bin/staticx
+#
 # $PP install --upgrade pip
 # $PP install pyinstaller
 # $PP install -r requirements.txt
 # $PR SyncDevice.py --clean --onefile -n SyncDevice
+#
+# $PP install staticx
+# $ST dist/SyncDevice SyncDevice
 #
 # --------------------------------------------------------------------------------------------------------
