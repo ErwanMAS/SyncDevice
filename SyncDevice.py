@@ -20,6 +20,7 @@ import select
 import base64
 import time
 import zlib
+import zstd
 # https://docs.python.org/2/library/struct.html
 # --------------------------------------------------------------------------------------------------------
 #             connection.setblocking(0) ....
@@ -72,7 +73,7 @@ def StartExchange(netsock,arg):
 # --------------------------------------------------------------------------------------------------------
 def StartExchangeSender(netsock,arg):
     # ----------------------------------------------------------------------------------------------------
-    localsize=DeviceSize(arg.device)
+    localsize=DeviceSize(arg.device)-arg.offset
     t_infos=[None,None,None,None]
     queue_4_checksum=queue.Queue(maxsize=2048)
     #
@@ -116,9 +117,9 @@ def StartExchangeSender(netsock,arg):
                 sync_pos=int(cmdmatch.group(1))
                 cnt_block_in_transit=cnt_block_in_transit-1
 #                print('receive ok needdata @ %12d ' % sync_pos , file=sys.stderr)
-                dta=BlockRead(arg.device,arg.offset+sync_pos,arg.blocksize,arg.compress)
+                dta=BlockRead(arg.device,arg.offset+sync_pos,arg.blocksize,arg.compress,arg.compress_algo)
                 if arg.compress :
-                    if SendCmd(netsock,"BLOCK DATA COMPRESS %d %d " % (sync_pos,len(dta) ) ) :
+                    if SendCmd(netsock,"BLOCK DATA COMPRESS %s%d %d " % ("" if arg.compress_algo == "zlib" else "ZSTD ",sync_pos,len(dta) ) ) :
                         if netsock.sendall(dta) != None :
                             print('can not send payload data for %d ' % sync_pos , file=sys.stderr)
                             break
@@ -261,6 +262,19 @@ def StartExchangeReceiver(netsock,arg):
             dataraw=ReadDataOnSocket(netsock,datalen)
             if dataraw and len(dataraw) == datalen :
                 queue_4_block_writer.put(['WRTZ',datapos,dataraw])
+                last_pos_for_rcvdat=datapos
+                continue
+            else:
+                print('incomplete payload for cmd %s\n' % (t), file=sys.stderr)
+                break
+
+        cmdmatch = re.search('^\s*BLOCK DATA\s+COMPRESS\s+ZSTD\s+(\d+)\s+(\d+)\s*$',t)
+        if cmdmatch:
+            datapos=int(cmdmatch.group(1))
+            datalen=int(cmdmatch.group(2))
+            dataraw=ReadDataOnSocket(netsock,datalen)
+            if dataraw and len(dataraw) == datalen :
+                queue_4_block_writer.put(['WRTS',datapos,dataraw])
                 last_pos_for_rcvdat=datapos
                 continue
             else:
@@ -418,14 +432,17 @@ def ManageCounters ( stop , arg , queue4counters ):
             DisplayCounters(counters,elapsedtime)
             lastts=curts
 # --------------------------------------------------------------------------------------------------------
-def BlockRead ( dev , syncpos , bs , must_compress):
+def BlockRead ( dev , syncpos , bs , must_compress , compress_algo ):
     f = open(dev, 'rb')
     f.seek(syncpos)
     dta=f.read(bs)
     if len(dta) == 0 :
         return
     if must_compress :
-        return zlib.compress(dta,9)
+        if compress_algo == "zstd" :
+            return zstd.compress(dta,11)
+        else:
+            return zlib.compress(dta,9)
     else:
         return dta
 # --------------------------------------------------------------------------------------------------------
@@ -437,12 +454,16 @@ def BlockWriter ( stop , dev , offset , syncsize , bs , queue2read ,queue4counte
     tv=0
     while  ( last_write < syncsize -bs ) :
         item=queue2read.get()
-        if item[0] == 'WRT' or item[0] == 'WRTZ' :
-#            print >>sys.stderr,'write some data at %s ( %s) \n' % (item[1],len(item[2]))
+        if item[0] == 'WRT' or item[0] == 'WRTZ' or item[0] == 'WRTS' :
+#            sys.stderr.write('write some data at %s ( %s) \n' % (item[1],len(item[2])))
             t1=time.time()
             f.seek(offset+item[1])
             if item[0] == 'WRTZ' :
                 dataorig=zlib.decompress(item[2])
+                f.write(dataorig)
+                v=len(dataorig)
+            elif item[0] == 'WRTS' :
+                dataorig=zstd.decompress(item[2])
                 f.write(dataorig)
                 v=len(dataorig)
             else:
@@ -454,7 +475,7 @@ def BlockWriter ( stop , dev , offset , syncsize , bs , queue2read ,queue4counte
             tv=tv+v
             t2=time.time()
             tt=tt+t2-t1
-            mustsleep=(tv*1.0/(1024.0*1024*1024))-tt
+            mustsleep=(tv*1.0/(2.0*1024.0*1024*1024))-tt
             #
             if mustsleep > 0.5 :
                 print('%f secs.  %d trfs => %f'% (tt,tv,mustsleep),file=sys.stderr)
@@ -553,9 +574,15 @@ parser.add_argument('--offset'       ,metavar='OFFSET',type=int,help="offset for
 parser.add_argument('--device'       ,metavar='DISK',help="on which device",required=True)
 parser.add_argument('--addr'         ,help="daemon addr")
 parser.add_argument('--compress'     , type=bool , default=False ,help="Activate Compression")
+parser.add_argument('--compress_algo',choices=['zlib', 'zstd']   ,help="Compression algo")
 parser.add_argument('--benchmark'    ,choices=['md5','adl','sha1','sha512','md4','skein_1024','skein_512','skein_256'],help="benchmark of hash")
 args = parser.parse_args()
 # --------------------------------------------------------------------------------------------------------
+if args.action == "receiver" and args.compress :
+    print("Error --compress valid only for action sender")
+    sys.exit()
+if args.compress and  args.compress_algo == None :
+    args.compress_algo="zstd"
 if args.benchmark :
     benchmark_hash(args)
     sys.exit()
@@ -580,6 +607,7 @@ if args.mode == 'client' :
 # 
 # BLOCK DATA <pos>
 # BLOCK DATA COMPRESS <pos> <compressed size>
+# BLOCK DATA COMPRESS ZSTD <pos> <compressed size>
 # 
 # #----
 # 
@@ -593,7 +621,8 @@ if args.mode == 'client' :
 # 
 # BLOCK DATA PARTIAL <pos> <partial size>
 # BLOCK DATA PARTIAL COMPRESS <pos> <partial size>
-# 
+# BLOCK DATA PARTIAL COMPRESS ZSTD <pos> <partial size>
+#
 # #------------------------------------------------------------------------
 # 
 # 
@@ -607,7 +636,7 @@ if args.mode == 'client' :
 #
 #
 # cd /app
-# apt-get update && apt-get install -y python3-pip python3-venv patchelf
+# apt-get update && apt-get install -y python3-pip python3-venv patchelf python3-wheel
 # TMPDIR=$(mktemp  -d)
 # python3 -m venv $TMPDIR/pyinstaller
 #
@@ -617,9 +646,10 @@ if args.mode == 'client' :
 # ST=$TMPDIR/pyinstaller/bin/staticx
 #
 # $PP install --upgrade pip
+# $PP install --upgrade wheel
 # $PP install pyinstaller
 # $PP install -r requirements.txt
-# echo $TMPDIR
+# echo TMPDIR=$TMPDIR
 # $PR SyncDevice.py --clean --onefile -n SyncDevice
 #
 # $PP install staticx
