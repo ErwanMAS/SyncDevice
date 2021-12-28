@@ -116,7 +116,7 @@ def StartExchangeSender(netsock,arg):
                 sync_pos=int(cmdmatch.group(1))
                 cnt_block_in_transit=cnt_block_in_transit-1
 #                print('receive ok needdata @ %12d ' % sync_pos , file=sys.stderr)
-                dta=BlockRead(arg.device,sync_pos,arg.blocksize,arg.compress)
+                dta=BlockRead(arg.device,arg.offset+sync_pos,arg.blocksize,arg.compress)
                 if arg.compress :
                     if SendCmd(netsock,"BLOCK DATA COMPRESS %d %d " % (sync_pos,len(dta) ) ) :
                         if netsock.sendall(dta) != None :
@@ -209,9 +209,10 @@ def StartExchangeReceiver(netsock,arg):
         #
         cmdmatch = re.search('^DEVICE ([^\s]+)\s+(\d+)\s+(\d+)\s+((ULTRA)|(FAST)|(STANDART)|(SECURE))\s*$',t)
         if cmdmatch:
-            localsize=DeviceSize(arg.device)
-            print('must sync from %s size %s ( blocksize %s ) mode %s to device %s ( %s) \n' % (
-                cmdmatch.group(1) ,cmdmatch.group(2), cmdmatch.group(3) , cmdmatch.group(4) , arg.device , localsize ), file=sys.stderr)
+            diskoffset=arg.offset
+            localsize=DeviceSize(arg.device)-diskoffset
+            print('must sync from %s size %s ( blocksize %s ) mode %s to device %s ( %s starting at %s ) \n' % (
+                cmdmatch.group(1) ,cmdmatch.group(2), cmdmatch.group(3) , cmdmatch.group(4) , arg.device , localsize , diskoffset ), file=sys.stderr)
             if ( localsize < int(cmdmatch.group(2)) ):
                 print('can not sync because size of %s is %s\n' % ( arg.device, DeviceSize(arg.device) ), file=sys.stderr)
                 return
@@ -238,7 +239,7 @@ def StartExchangeReceiver(netsock,arg):
             t_infos[2][0].setDaemon(True)
             t_infos[2][0].start()
             #-------------------------------------------------------------------------------------------------
-            t_infos[3]=[threading.Thread(target=BlockWriter, args=(ev_stop,arg.device,syncsize,arg.blocksize,queue_4_block_writer,queue_4_counters)),ev_stop]
+            t_infos[3]=[threading.Thread(target=BlockWriter, args=(ev_stop,arg.device,diskoffset,syncsize,arg.blocksize,queue_4_block_writer,queue_4_counters)),ev_stop]
             t_infos[3][0].setDaemon(True)
             t_infos[3][0].start()
             #-------------------------------------------------------------------------------------------------
@@ -309,7 +310,7 @@ def ComputeCheckSum ( stop , arg , sync_size , queue4chksum ):
     while ( chksum_pos < sync_size ):
         if stop.is_set():
             break
-        d.seek(chksum_pos)
+        d.seek(chksum_pos+arg.offset)
         dta=d.read(arg.blocksize)
         if ( args.hashmode == 'standart' ) :
             h_md5 = base64.b64encode(hashlib.md5(dta).digest())
@@ -428,7 +429,7 @@ def BlockRead ( dev , syncpos , bs , must_compress):
     else:
         return dta
 # --------------------------------------------------------------------------------------------------------
-def BlockWriter ( stop , dev , syncsize , bs , queue2read ,queue4counters ):
+def BlockWriter ( stop , dev , offset , syncsize , bs , queue2read ,queue4counters ):
     f = open(dev, 'rb+')
     last_write=0
     cntrcvko=0
@@ -439,7 +440,7 @@ def BlockWriter ( stop , dev , syncsize , bs , queue2read ,queue4counters ):
         if item[0] == 'WRT' or item[0] == 'WRTZ' :
 #            print >>sys.stderr,'write some data at %s ( %s) \n' % (item[1],len(item[2]))
             t1=time.time()
-            f.seek(item[1])
+            f.seek(offset+item[1])
             if item[0] == 'WRTZ' :
                 dataorig=zlib.decompress(item[2])
                 f.write(dataorig)
@@ -548,6 +549,7 @@ parser.add_argument('--mode'         ,choices=['daemon', 'client']   ,help="daem
 parser.add_argument('--action'       ,choices=['sender', 'receiver'] ,help="sender/receiver",default='receiver')
 parser.add_argument('--hashmode'     ,choices=['secure','standart', 'fast','ultra'] ,help="checksum quality",default='standart')
 parser.add_argument('--blocksize'    ,metavar='BLOCKSIZE',type=int,help="size of block for transfert",default=1024*1024)
+parser.add_argument('--offset'       ,metavar='OFFSET',type=int,help="offset for reading/writing on the device",default=0)
 parser.add_argument('--device'       ,metavar='DISK',help="on which device",required=True)
 parser.add_argument('--addr'         ,help="daemon addr")
 parser.add_argument('--compress'     , type=bool , default=False ,help="Activate Compression")
@@ -599,8 +601,13 @@ if args.mode == 'client' :
 # 
 # 
 # --------------------------------------------------------------------------------------------------------
-# sudo apt-get install python3-pip python3-venv patchelf
 #
+# docker run -v $(pwd):/app -it debian:11 /bin/bash
+# export http_proxy=http://192.168.0.37:3128/
+#
+#
+# cd /app
+# apt-get update && apt-get install -y python3-pip python3-venv patchelf
 # TMPDIR=$(mktemp  -d)
 # python3 -m venv $TMPDIR/pyinstaller
 #
@@ -612,9 +619,10 @@ if args.mode == 'client' :
 # $PP install --upgrade pip
 # $PP install pyinstaller
 # $PP install -r requirements.txt
+# echo $TMPDIR
 # $PR SyncDevice.py --clean --onefile -n SyncDevice
 #
 # $PP install staticx
-# $ST dist/SyncDevice SyncDevice
+# $ST dist/SyncDevice dist/SyncDevice.static
 #
 # --------------------------------------------------------------------------------------------------------
