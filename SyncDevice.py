@@ -76,6 +76,8 @@ def StartExchangeSender(netsock,arg):
     localsize=DeviceSize(arg.device)-arg.offset
     t_infos=[None,None,None,None]
     queue_4_checksum=queue.Queue(maxsize=2048)
+    queue_pool_checksum=queue.Queue(maxsize=20)
+    queue_pool_checksum_res=queue.PriorityQueue(maxsize=20)
     #
     cmd="DEVICE %s %s %s %s" % ( arg.device , localsize , arg.blocksize , arg.hashmode.upper() )
     res=SendCmdAndWait(netsock,cmd)
@@ -89,10 +91,18 @@ def StartExchangeSender(netsock,arg):
     print("OK SendCmdAndWait DEVICE\n",file=sys.stderr)
     #
     ev_stop=threading.Event()
-    t_infos[0]=[threading.Thread(target=ComputeCheckSum, args=(ev_stop,arg,localsize,queue_4_checksum)),ev_stop]
+    t_infos[0]=[threading.Thread(target=ScanForCheckSum,
+                                 args=(ev_stop,arg,localsize,queue_pool_checksum,queue_pool_checksum_res,queue_4_checksum)),ev_stop]
     t_infos[0][0].setDaemon(True)
     t_infos[0][0].start()
-    # ----------------------------------------------------------------------------------------------------
+    #-------------------------------------------------------------------------------------------------
+    for x in range(1,4):
+        ev_stop=threading.Event()
+        t_infos[x]=[threading.Thread(target=ComputeCheckSum,
+                                     args=(ev_stop,arg,queue_pool_checksum,queue_pool_checksum_res)),ev_stop]
+        t_infos[x][0].setDaemon(True)
+        t_infos[x][0].start()
+    #-------------------------------------------------------------------------------------------------
     sync_pos=0
     sync_length=localsize
     cnt_block_in_transit=0
@@ -104,7 +114,7 @@ def StartExchangeSender(netsock,arg):
             res=ReadCmd(netsock)
             if  not res :
                 print('netsock is empty\n', file=sys.stderr)
-                return
+                break
             #
             cmdmatch = re.search('^B(\d+)$',res)
             if cmdmatch:
@@ -150,6 +160,15 @@ def StartExchangeSender(netsock,arg):
                     cnt_block_in_transit=cnt_block_in_transit+1
         #-----------
     # ----------------------------------------------------------------------------------------------------
+    t_infos[0][1].set()
+    t_infos[0][0].join()
+    for x in range(1, 4):
+        t_infos[x][1].set()
+    for x in range(1, 4):
+        t_infos[x][0].join()
+    #
+    print('sender -- end of sync\n', file=sys.stderr)
+
 # --------------------------------------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------------------------------------
@@ -157,6 +176,8 @@ def StartExchangeReceiver(netsock,arg):
     #
     queue_4_send_packet=queue.Queue()
     queue_4_received_checksum=queue.Queue(maxsize=2048)
+    queue_pool_checksum=queue.Queue(maxsize=20)
+    queue_pool_checksum_res=queue.PriorityQueue(maxsize=20)
     queue_4_block_writer=queue.Queue(maxsize=32)
     queue_4_counters=queue.Queue(maxsize=16)
     #
@@ -169,7 +190,7 @@ def StartExchangeReceiver(netsock,arg):
     last_pos_for_askdat=-arg.blocksize
     last_pos_for_rcvdat=-arg.blocksize
     #
-    t_infos=[None,None,None,None]
+    t_infos=[None,None,None,None,None,None,None,None]
     #
     while True :
         if ( queue_4_send_packet.qsize() > 0 ) :
@@ -193,11 +214,12 @@ def StartExchangeReceiver(netsock,arg):
         readable, writable, exceptional = select.select([netsock],[],[],0.05)
         #
         if ( not readable ) :
-            if ( last_pos_for_chksum == syncsize-arg.blocksize or last_pos_for_askdat == syncsize-arg.blocksize ) :
-                # we reach the end of device on our side
-                if ( last_pos_for_rcvdat == last_pos_for_askdat ) :
-                    end_is_normal=1
-                    break
+            if state == 2 :
+                if ( last_pos_for_chksum == syncsize-arg.blocksize or last_pos_for_askdat == syncsize-arg.blocksize ) :
+                    # we reach the end of device on our side
+                    if ( last_pos_for_rcvdat == last_pos_for_askdat ) :
+                        end_is_normal=1
+                        break
             continue
         #
         t=ReadCmd(netsock)
@@ -225,9 +247,17 @@ def StartExchangeReceiver(netsock,arg):
             queue_4_counters.put([['syncsize',syncsize],['blocksize',arg.blocksize],['cntok',0],['cntko',0],['last_cur_pos_ok',-arg.blocksize],['cntrcvko',0],['lastwritepos',-arg.blocksize]])
             #-------------------------------------------------------------------------------------------------
             ev_stop=threading.Event()
-            t_infos[0]=[threading.Thread(target=ComputeCheckSum, args=(ev_stop,arg,syncsize,queue_4_received_checksum)),ev_stop]
+            t_infos[0]=[threading.Thread(target=ScanForCheckSum,
+                                         args=(ev_stop,arg,syncsize,queue_pool_checksum,queue_pool_checksum_res,queue_4_received_checksum)),ev_stop]
             t_infos[0][0].setDaemon(True)
             t_infos[0][0].start()
+            #-------------------------------------------------------------------------------------------------
+            for x in range(4, 8):
+                ev_stop=threading.Event()
+                t_infos[x]=[threading.Thread(target=ComputeCheckSum,
+                                             args=(ev_stop,arg,queue_pool_checksum,queue_pool_checksum_res)),ev_stop]
+                t_infos[x][0].setDaemon(True)
+                t_infos[x][0].start()
             #-------------------------------------------------------------------------------------------------
             ev_stop=threading.Event()
             t_infos[1]=[threading.Thread(target=ManageCheckSum,
@@ -302,6 +332,10 @@ def StartExchangeReceiver(netsock,arg):
     if end_is_normal == 1 :
         t_infos[1][0].join()
         t_infos[0][0].join()
+        for x in range(4, 8):
+            t_infos[x][1].set()
+        for x in range(4, 8):
+            t_infos[x][0].join()
     #
     queue_4_counters.put(['END'])
     t_infos[2][0].join()
@@ -309,22 +343,31 @@ def StartExchangeReceiver(netsock,arg):
     if end_is_normal == 0 :
         t_infos[0][1].set()
         t_infos[1][1].set()
+        for x in range(4, 8):
+            t_infos[x][1].set()
         t_infos[1][0].join()
         t_infos[0][0].join()
+        for x in range(4, 8):
+            t_infos[x][0].join()
     #
-    print('end of sync\n', file=sys.stderr)
+    print('receiver -- end of sync\n', file=sys.stderr)
     sys.exit()
 
 
 # --------------------------------------------------------------------------------------------------------
-def ComputeCheckSum ( stop , arg , sync_size , queue4chksum ):
+def ComputeCheckSum ( stop , arg , inputqueue , queue4res ):
     d = open(arg.device, 'rb')
-    chksum_pos = 0
-#    print >>sys.stderr,'start compute CKSUM for %s during %s\n' % (arg.device,sync_size)
-    while ( chksum_pos < sync_size ):
+    while ( True ) :
+        try:
+            C=inputqueue.get(timeout=2)
+        except:
+            C=None
         if stop.is_set():
             break
-        d.seek(chksum_pos+arg.offset)
+        if not C :
+            continue
+        #
+        d.seek(C[0]+arg.offset)
         dta=d.read(arg.blocksize)
         if ( args.hashmode == 'standart' ) :
             h_md5 = base64.b64encode(hashlib.md5(dta).digest())
@@ -340,12 +383,39 @@ def ComputeCheckSum ( stop , arg , sync_size , queue4chksum ):
         if ( args.hashmode == 'secure' ) :
             h_md5 = base64.b64encode(skein1024(dta).digest())
             h_sha1 = base64.b64encode(hashlib.sha512(dta).digest())
-
-#        print ('compute of CKSUM at pos %s / %s:%s\n' % (chksum_pos,h_md5,h_sha1),file=sys.stderr)
-        queue4chksum.put([1,"L",chksum_pos,h_md5.decode(),h_sha1.decode()])
-        chksum_pos=chksum_pos+arg.blocksize
+        #
+        queue4res.put([C[0],h_md5.decode(),h_sha1.decode()])
     #----------------------------------------------------
     sys.stderr.write('[ComputeCheckSum]Done Finish\n')
+
+# --------------------------------------------------------------------------------------------------------
+def ScanForCheckSum ( stop , arg , sync_size , poolchksum, poolchksumres , queue4chksum ):
+    d = open(arg.device, 'rb')
+    chksum_pos = 0
+    last_chksum_pos = 0
+    in_flight = 0
+#    print >>sys.stderr,'start compute CKSUM for %s during %s\n' % (arg.device,sync_size)
+    while ( chksum_pos < sync_size or in_flight > 0 ):
+        if stop.is_set():
+            break
+        if in_flight < 18 and chksum_pos < sync_size :
+            poolchksum.put([chksum_pos])
+            in_flight = in_flight + 1
+            chksum_pos=chksum_pos+arg.blocksize
+            continue
+        R=poolchksumres.get()
+        if R[0] == last_chksum_pos:
+#            print ('compute of CKSUM at pos %s / %s:%s\n' % (R[0],R[1],R[2]),file=sys.stderr)
+            queue4chksum.put([1,"L",R[0],R[1],R[2]])
+            in_flight = in_flight - 1
+            last_chksum_pos = last_chksum_pos + arg.blocksize
+            continue
+        else:
+#            print ('receive out of order -- CKSUM at pos %s / %s:%s\n' % (R[0],R[1],R[2]),file=sys.stderr)
+            poolchksumres.put(R)
+            time.sleep(0.1)
+    #----------------------------------------------------
+    sys.stderr.write('[ScanForCheckSum]Done Finish\n')
 
 # --------------------------------------------------------------------------------------------------------
 def ManageCheckSum ( stop , queue4chksum , queue4sendcmd,syncsize , blocksize,queue4counters,queue4blockwriter):
@@ -648,11 +718,12 @@ if args.mode == 'client' :
 # $PP install --upgrade pip
 # $PP install --upgrade wheel
 # $PP install pyinstaller
-# $PP install -r requirements.txt
-# echo TMPDIR=$TMPDIR
-# $PR SyncDevice.py --clean --onefile -n SyncDevice
-#
 # $PP install staticx
+# $PP install -r requirements.txt
+#
+# echo TMPDIR=$TMPDIR
+#
+# $PR SyncDevice.py --clean --onefile -n SyncDevice
 # $ST dist/SyncDevice dist/SyncDevice.static
 #
 # --------------------------------------------------------------------------------------------------------
