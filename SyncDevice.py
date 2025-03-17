@@ -369,6 +369,7 @@ def ComputeCheckSum ( stop , arg , inputqueue , queue4res ):
         #
         d.seek(C[0]+arg.offset)
         dta=d.read(arg.blocksize)
+#        print('we compute checksum at %s len %s\n'%(C[0],len(dta)),file=sys.stderr)
         if ( args.hashmode == 'standart' ) :
             h_md5 = base64.b64encode(hashlib.md5(dta).digest())
             h_sha1 = base64.b64encode(hashlib.sha1(dta).digest())
@@ -394,7 +395,8 @@ def ScanForCheckSum ( stop , arg , sync_size , poolchksum, poolchksumres , queue
     chksum_pos = 0
     last_chksum_pos = 0
     in_flight = 0
-#    print >>sys.stderr,'start compute CKSUM for %s during %s\n' % (arg.device,sync_size)
+    adjust_for_last_block = True
+#    print ('start compute CKSUM for %s during %s\n' % (arg.device,sync_size),file=sys.stderr)
     while ( chksum_pos < sync_size or in_flight > 0 ):
         if stop.is_set():
             break
@@ -402,6 +404,9 @@ def ScanForCheckSum ( stop , arg , sync_size , poolchksum, poolchksumres , queue
             poolchksum.put([chksum_pos])
             in_flight = in_flight + 1
             chksum_pos=chksum_pos+arg.blocksize
+            if chksum_pos + arg.blocksize > sync_size and adjust_for_last_block :
+                chksum_pos=sync_size-arg.blocksize
+                adjust_for_last_block = False
             continue
         R=poolchksumres.get()
         if R[0] == last_chksum_pos:
@@ -409,9 +414,11 @@ def ScanForCheckSum ( stop , arg , sync_size , poolchksum, poolchksumres , queue
             queue4chksum.put([1,"L",R[0],R[1],R[2]])
             in_flight = in_flight - 1
             last_chksum_pos = last_chksum_pos + arg.blocksize
+            if last_chksum_pos + arg.blocksize > sync_size :
+                last_chksum_pos=sync_size-arg.blocksize
             continue
         else:
-#            print ('receive out of order -- CKSUM at pos %s / %s:%s\n' % (R[0],R[1],R[2]),file=sys.stderr)
+#            print ('receive out of order --last is %s --  CKSUM at pos %s / %s:%s\n' % (last_chksum_pos,R[0],R[1],R[2]),file=sys.stderr)
             poolchksumres.put(R)
             time.sleep(0.1)
     #----------------------------------------------------
@@ -450,6 +457,8 @@ def ManageCheckSum ( stop , queue4chksum , queue4sendcmd,syncsize , blocksize,qu
             maxremote=C[2] 
         while ( maxremote > last_cur_pos_ok and maxlocal > last_cur_pos_ok ) :
             cmppos=(last_cur_pos_ok+blocksize)
+            if cmppos+ blocksize > syncsize :
+                cmppos=syncsize-blocksize 
 #            print('we must compare at %s ( max local %s max remote %s ) \n' % ( cmppos , maxlocal , maxremote ) , file=sys.stderr)
 #            pprint.pprint([localchksum,remotechksum])
             if remotechksum[cmppos][0] != localchksum[cmppos][0] or remotechksum[cmppos][1] != localchksum[cmppos][1]:
